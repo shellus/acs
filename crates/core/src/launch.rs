@@ -9,6 +9,9 @@ use std::{
     process::{Child, Command},
 };
 
+#[cfg(windows)]
+mod windows;
+
 pub const RESOLVER_RULES: &str = "MAP chatgpt.com 0.0.0.0, MAP *.chatgpt.com 0.0.0.0, MAP chat.openai.com 0.0.0.0, MAP *.openai.com 0.0.0.0, MAP *.oaistatic.com 0.0.0.0";
 const CODEX_KEYS: [&str; 2] = ["OPENAI_API_KEY", "OPENAI_BASE_URL"];
 const CLAUDE_KEYS: [&str; 3] = [
@@ -93,6 +96,21 @@ impl Plan {
             .spawn()
             .with_context(|| format!("无法启动 {}", self.executable.display()))
     }
+
+    pub fn spawn_desktop(&self) -> Result<()> {
+        match self.command().spawn() {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                #[cfg(windows)]
+                if error.kind() == std::io::ErrorKind::PermissionDenied {
+                    if let Some(package) = windows::package_for(&self.executable)? {
+                        return windows::spawn_packaged(self, &package);
+                    }
+                }
+                Err(error).with_context(|| format!("无法启动 {}", self.executable.display()))
+            }
+        }
+    }
 }
 
 pub fn desktop_executable(agent: Agent) -> Result<PathBuf> {
@@ -101,31 +119,8 @@ pub fn desktop_executable(agent: Agent) -> Result<PathBuf> {
     }
     #[cfg(windows)]
     {
-        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
-        let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages").context("未找到客户端安装信息，请打开应用商店安装")?;
-        let mut candidates = Vec::new();
-        for name in key.enum_keys() {
-            let name = name?;
-            if !name.starts_with("OpenAI.Codex_") {
-                continue;
-            }
-            let package = key.open_subkey(&name)?;
-            let root: String = package.get_value("PackageRootFolder")?;
-            let path = PathBuf::from(root).join("app/ChatGPT.exe");
-            if path.is_file() {
-                let version: Vec<u32> = name
-                    .split('_')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split('.')
-                    .map(|n| n.parse().unwrap_or(0))
-                    .collect();
-                candidates.push((version, path));
-            }
-        }
-        candidates.sort_by(|a, b| b.0.cmp(&a.0));
-        if let Some((_, path)) = candidates.into_iter().next() {
-            return Ok(path);
+        if let Some(package) = windows::installed_packages()?.into_iter().next() {
+            return Ok(package.executable);
         }
     }
     #[cfg(target_os = "macos")]
@@ -145,9 +140,9 @@ pub fn desktop_executable(agent: Agent) -> Result<PathBuf> {
 }
 pub fn launch_desktop(settings: Settings) -> Result<()> {
     let executable = desktop_executable(settings.agent)?;
-    // Do not fall back to Explorer activation: it drops arguments and child environment.
-    // A successful request must actually use the selected mode's network settings.
-    settings.plan(executable, true, Vec::new())?.spawn()?;
+    settings
+        .plan(executable, true, Vec::new())?
+        .spawn_desktop()?;
     Ok(())
 }
 pub fn cli_executable(agent: Agent) -> PathBuf {

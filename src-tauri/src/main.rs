@@ -44,27 +44,31 @@ fn save(
         .map_err(|e| failure(&state, "保存配置", format!("{e:#}")))
 }
 #[tauri::command]
-fn launch(
+async fn launch(
     app: tauri::AppHandle,
-    state: tauri::State<State>,
     revision: String,
     draft: Draft,
     agent: String,
 ) -> Result<(), String> {
     let agent = agent.parse::<Agent>().map_err(|e| e.to_string())?;
-    let guard = state
-        .session
-        .try_lock()
-        .map_err(|_| "操作正在执行".to_string())?;
-    let settings = guard
-        .as_ref()
-        .ok_or("请先读取配置")?
-        .launch_settings_for(&revision, &draft, agent)
-        .map_err(|e| failure(&state, "启动校验", format!("{e:#}")))?;
-    acs_core::launch::launch_desktop(settings)
-        .map_err(|e| failure(&state, "启动客户端", format!("{e:#}")))?;
-    app.exit(0);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<State>();
+        let guard = state
+            .session
+            .try_lock()
+            .map_err(|_| "操作正在执行".to_string())?;
+        let settings = guard
+            .as_ref()
+            .ok_or("请先读取配置")?
+            .launch_settings_for(&revision, &draft, agent)
+            .map_err(|e| failure(&state, "启动校验", format!("{e:#}")))?;
+        acs_core::launch::launch_desktop(settings)
+            .map_err(|e| failure(&state, "启动客户端", format!("{e:#}")))?;
+        app.exit(0);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn repair(

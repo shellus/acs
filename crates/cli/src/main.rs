@@ -345,7 +345,7 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
             if dry_run {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else if desktop {
-                plan.spawn()?;
+                plan.spawn_desktop()?;
             } else {
                 let status = plan.spawn()?.wait()?;
                 std::process::exit(status.code().unwrap_or(1));

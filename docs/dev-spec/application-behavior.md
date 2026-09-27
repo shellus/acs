@@ -74,6 +74,14 @@ Claude 认证由 `settings.json` 的 `ANTHROPIC_*` 与 `.credentials.json` 共�
 
 CI 在三个系统运行核心/CLI 回归，构建 Windows/macOS GUI。构建和 fixture 测试不等同于真实账号联网或真实客户端启动验证。
 
+### Windows 商店包启动
+
+优先直接启动已登记的 Codex EXE。仅当该 EXE 返回拒绝访问时，通过 Windows PowerShell 的 `Invoke-CommandInDesktopPackage` 在对应商店包上下文中创建进程；GUI 与 CLI `run --desktop` 共用实现。普通 CLI 进程不走此回退。
+
+包激活不会继承调用者环境，因此辅助进程从临时请求文件恢复完整子进程环境，应用启动计划中的变量覆盖与删除，并原样传递参数和工作目录。只有目标进程创建成功并返回 PID 后才视为启动请求成功；失败或等待确认超时保留配置窗口。临时文件在请求结束后清理，不修改系统权限、用户环境变量或商店包文件，不停止已有客户端，也不使用 Explorer 激活回退。
+
+Windows 常规测试验证参数转义、环境传递、父环境不变和目标进程创建失败。有 Codex 商店包的机器可运行 `cargo test -p acs-core --locked installed_package_preserves_launch_environment -- --ignored`，通过隔离探针验证真实包上下文中的两种模式与失败回传；探针不读取真实用户配置。该检查验证启动链路，不代表真实账号联网成功。
+
 ## 仍需关注的边界
 
 - Claude 没有桌面客户端，GUI 的“启动”对 Claude 走 `launch_desktop` 会直接报“Claude 没有桌面客户端，请直接启动 CLI”。要么让 GUI 对 Claude 启动 CLI，要么在 Claude 选中时明确禁用启动按钮，需要产品决策。
@@ -82,5 +90,5 @@ CI 在三个系统运行核心/CLI 回归，构建 Windows/macOS GUI。构建和
 - SQLite ATTACH 在 WAL、崩溃或掉电条件下不保证跨库提交原子性；备份提供恢复依据。修复应停止客户端写入后执行。
 - rollout 扫描流式处理，但替换/冲突核对阶段仍读取完整文件；极大文件峰值内存待评估。
 - 窗口打开后的 OAuth 刷新会触发外部变更阻止，需重新读取。
-- Windows 包 EXE 访问被拒绝时明确报错，不使用会丢失参数与环境的 Explorer 激活回退。
+- Windows 商店包回退依赖系统 Windows PowerShell 与 Appx 模块；系统策略禁止辅助进程或包激活时明确报错。
 - macOS 真实 Codex 启动、联网、菜单和多显示器仍需对应机器实测；无发布凭据时不声称完成 Apple 签名/公证。
