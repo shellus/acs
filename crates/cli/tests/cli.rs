@@ -113,23 +113,6 @@ fn manages_both_clients_without_launching_and_requires_repair_confirmation() {
 }
 
 #[test]
-fn imported_api_id_prefix_switches_without_an_explicit_kind() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(dir.path().join("codex")).unwrap();
-    fs::write(dir.path().join("codex/config.toml"), "model_provider='custom'\nmodel='example-model'\nmodel_reasoning_effort='medium'\n[model_providers.custom]\nname='example'\nbase_url='https://api.example.com/v1'\nwire_api='responses'\nrequires_openai_auth=true\n").unwrap();
-    fs::write(
-        dir.path().join("codex/auth.json"),
-        r#"{"auth_mode":"apikey","OPENAI_API_KEY":"example-key"}"#,
-    )
-    .unwrap();
-    let id = ids(dir.path(), "codex", "custom_providers")[0].clone();
-    // 导入的不写旧位置，配置库只出现在新的 acs 目录。
-    assert!(!dir.path().join("codex/launcher-profiles").exists());
-    ok(dir.path(), &["use", &id[..8]]);
-    assert!(dir.path().join("acs/profiles.json").exists());
-}
-
-#[test]
 fn ambiguous_and_unknown_targets_report_a_clear_error() {
     let dir = tempfile::tempdir().unwrap();
     for name in ["example one", "example two"] {
@@ -161,6 +144,59 @@ fn ambiguous_and_unknown_targets_report_a_clear_error() {
     let official = acs(dir.path(), &["edit", "example account", "--model", "x"]);
     assert!(!official.status.success());
     assert!(String::from_utf8_lossy(&official.stderr).contains("官方客户端登录维护"));
+}
+
+#[test]
+fn identical_client_profiles_have_short_unique_ids_and_delete_only_the_requested_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut all = std::collections::HashSet::new();
+    for agent in ["codex", "claude"] {
+        ok(dir.path(), &["add", agent, "official", "example account"]);
+        ok(
+            dir.path(),
+            &[
+                "add",
+                agent,
+                "custom",
+                "example API",
+                "--url",
+                "https://api.example.com/v1",
+                "--key",
+                "example-key",
+                "--model",
+                "example-model",
+            ],
+        );
+        for mode in ["official_accounts", "custom_providers"] {
+            for id in ids(dir.path(), agent, mode) {
+                assert_eq!(id.len(), 8);
+                assert!(all.insert(id));
+            }
+        }
+    }
+    let codex_id = ids(dir.path(), "codex", "official_accounts")[0].clone();
+    let claude_id = ids(dir.path(), "claude", "official_accounts")[0].clone();
+    let ambiguous = acs(dir.path(), &["rm", "example account", "--yes"]);
+    assert!(!ambiguous.status.success());
+    let error = String::from_utf8_lossy(&ambiguous.stderr);
+    assert!(
+        error.contains(&codex_id) && error.contains(&claude_id),
+        "{error}"
+    );
+    let codex_config = fs::read(dir.path().join("codex/config.toml")).unwrap();
+    let codex_auth = fs::read(dir.path().join("codex/auth.json")).unwrap();
+    ok(dir.path(), &["rm", &claude_id, "--yes"]);
+    assert!(ids(dir.path(), "claude", "official_accounts").is_empty());
+    assert_eq!(ids(dir.path(), "codex", "official_accounts"), [codex_id]);
+    assert_eq!(
+        fs::read(dir.path().join("codex/config.toml")).unwrap(),
+        codex_config
+    );
+    assert_eq!(
+        fs::read(dir.path().join("codex/auth.json")).unwrap(),
+        codex_auth
+    );
+    assert_eq!(ids(dir.path(), "claude", "custom_providers").len(), 1);
 }
 
 #[test]

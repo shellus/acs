@@ -45,7 +45,7 @@ acs ls
 acs ls --agent claude
 ```
 
-`ls` 输出的短 ID 后 8 位之外的名称、地址与登录摘要只用于识别；后续命令接受完整 ID、ID 前缀或名称，三者全局唯一，不必再写 `--kind`。
+配置 ID 是实际存储的 8 位随机十六进制字符串，在两个客户端、两种模式间全局唯一。`ls` 显示完整 ID，名称、地址与登录摘要只用于识别；后续命令接受 ID、唯一的 ID 前缀或名称，不必再写 `--kind`。名称可以重复，匹配多项时改用报错中列出的 ID。
 
 ```sh
 acs add codex official "example account"

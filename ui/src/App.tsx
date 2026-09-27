@@ -158,7 +158,7 @@ export default function App() {
   const fields = active?.custom_fields[id];
   const add = (copy = false) =>
     edit((current) => {
-      const newId = crypto.randomUUID().replaceAll("-", "");
+      const newId = crypto.randomUUID().slice(0, 8);
       const name = copy
         ? `${profile?.name || "未命名配置"} 副本`
         : mode === "official"

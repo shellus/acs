@@ -1,11 +1,10 @@
 use crate::{
     claude, codex,
-    storage::{read, revision, Roots, Snapshot, Store, LIBRARY},
+    storage::{revision, Roots, Snapshot, Store, LIBRARY},
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// 被管理的客户端。两个客户端各自独立生效，不是二选一：Codex 可以停在官方账号，
@@ -155,13 +154,35 @@ pub(crate) fn json(bytes: &Option<Vec<u8>>, label: &str) -> Result<Value> {
 pub(crate) fn nonempty(v: &Value) -> bool {
     v.as_str().is_some_and(|s| !s.trim().is_empty())
 }
-pub(crate) fn imported_id(kind: &str, identity: &[&str]) -> String {
-    let mut digest = Sha256::new();
-    for part in identity {
-        digest.update((part.len() as u64).to_le_bytes());
-        digest.update(part.as_bytes());
+fn validate_libraries<'a>(libraries: impl IntoIterator<Item = &'a Library>) -> Result<()> {
+    let mut ids = HashSet::new();
+    for library in libraries {
+        for mode in [Mode::Official, Mode::Custom] {
+            let profiles = library.profiles(mode);
+            for profile in profiles {
+                if profile.id.len() != 8
+                    || !profile
+                        .id
+                        .bytes()
+                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                {
+                    bail!("配置 ID 必须是 8 位小写十六进制字符")
+                }
+                if !ids.insert(&profile.id) {
+                    bail!(
+                        "配置 ID {} 重复；所有客户端和模式的 ID 必须全局唯一",
+                        profile.id
+                    )
+                }
+            }
+            if (profiles.is_empty() && !library.selection(mode).is_empty())
+                || (!profiles.is_empty() && library.selected(mode).is_none())
+            {
+                bail!("选中的配置不存在")
+            }
+        }
     }
-    format!("{kind}-{:x}", digest.finalize())
+    Ok(())
 }
 
 impl Library {
@@ -199,20 +220,7 @@ impl Library {
             .find(|p| p.id == self.selection(mode))
     }
     pub fn validate(&self) -> Result<()> {
-        for m in [Mode::Official, Mode::Custom] {
-            let mut ids = HashSet::new();
-            for p in self.profiles(m) {
-                if p.id.trim().is_empty() || !ids.insert(&p.id) {
-                    bail!("配置 ID 缺失或重复")
-                }
-            }
-            if (ids.is_empty() && !self.selection(m).is_empty())
-                || (!ids.is_empty() && self.selected(m).is_none())
-            {
-                bail!("选中的配置不存在")
-            }
-        }
-        Ok(())
+        validate_libraries([self])
     }
 }
 impl AgentDraft {
@@ -250,7 +258,18 @@ impl AgentDraft {
             .and_then(|id| self.custom_fields.get(id))
             .cloned()
             .unwrap_or_else(|| CustomFields::blank(self.agent));
-        p.id = uuid::Uuid::new_v4().simple().to_string();
+        p.id = loop {
+            let id = uuid::Uuid::new_v4().simple().to_string()[..8].to_owned();
+            if !self
+                .library
+                .official_accounts
+                .iter()
+                .chain(&self.library.custom_providers)
+                .any(|p| p.id == id)
+            {
+                break id;
+            }
+        };
         p.name = Some(name.trim().into());
         let id = p.id.clone();
         self.library.profiles_mut(mode).push(p);
@@ -350,7 +369,8 @@ impl CustomFields {
 impl Session {
     pub fn open(store: Store) -> Result<Self> {
         let baseline = store.snapshot()?;
-        let libraries = libraries(&store, &baseline)?;
+        let libraries = libraries(&baseline)?;
+        validate_libraries([&libraries.codex, &libraries.claude])?;
         let codex = codex::capture(libraries.codex, &baseline)?;
         let claude = claude::capture(libraries.claude, &baseline)?;
         let original = Draft { codex, claude };
@@ -382,6 +402,7 @@ impl Session {
     fn save_scope(&mut self, rev: &str, draft: &Draft, agent: Option<Agent>) -> Result<View> {
         let _lock = self.store.lock()?;
         self.check(rev)?;
+        validate_libraries([&draft.codex.library, &draft.claude.library])?;
         let mut draft = draft.clone();
         let mut after = self.baseline.clone();
         let codex_changed = draft.codex != self.original.codex;
@@ -435,10 +456,7 @@ impl Session {
     }
 }
 
-/// 2.x 把配置库放在 Codex 目录的 `launcher-profiles/modes.json`。首次以新目录打开时
-/// 读取旧文件作为初值，保存时自然落到 `~/.acs/profiles.json`；只做一次性迁移，
-/// 不写回旧位置，也不保留双向兼容。
-fn libraries(store: &Store, baseline: &Snapshot) -> Result<Libraries> {
+fn libraries(baseline: &Snapshot) -> Result<Libraries> {
     if let Some(bytes) = &baseline[LIBRARY] {
         let v: Value = serde_json::from_slice(bytes).context("profiles.json 格式无效")?;
         if !v["codex"].is_object() || !v["claude"].is_object() {
@@ -446,22 +464,7 @@ fn libraries(store: &Store, baseline: &Snapshot) -> Result<Libraries> {
         }
         return Ok(serde_json::from_value(v)?);
     }
-    let legacy = store.roots.codex.join("launcher-profiles/modes.json");
-    let Some(bytes) = read(&legacy)? else {
-        return Ok(Libraries::default());
-    };
-    let v: Value =
-        serde_json::from_slice(&bytes).with_context(|| format!("{} 格式无效", legacy.display()))?;
-    if !v["official_accounts"].is_array() || !v["custom_providers"].is_array() {
-        bail!("{} 配置结构不正确", legacy.display())
-    }
-    let mut codex: Library = serde_json::from_value(v)?;
-    // 旧文件顶层残留过 custom_key、official_auth 等字段，迁移时一并清理。
-    codex.extra.clear();
-    Ok(Libraries {
-        codex,
-        claude: Library::default(),
-    })
+    Ok(Libraries::default())
 }
 
 pub fn normalize_proxy(raw: &str) -> Result<String> {

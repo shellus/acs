@@ -1,7 +1,6 @@
 use crate::{
     config::{
-        imported_id, json, nonempty, proxy_env, text, Agent, AgentDraft, CustomFields, Library,
-        Mode, Profile,
+        json, nonempty, proxy_env, text, Agent, AgentDraft, CustomFields, Library, Mode, Profile,
     },
     storage::{Snapshot, CODEX_AUTH, CODEX_CONFIG, CODEX_ENV},
 };
@@ -122,7 +121,6 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
     capture_official(&mut library, &doc, &credentials)?;
     if active == Mode::Custom {
         let mut p = Profile {
-            name: Some("导入的 API".into()),
             model_providers_toml: Some(provider_snapshot(&doc)),
             custom_key: credentials["OPENAI_API_KEY"].as_str().map(str::to_owned),
             custom_model: Some(string(&doc, "model")),
@@ -130,7 +128,6 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
             ..Default::default()
         };
         let f = fields(&p)?;
-        p.id = imported_id("custom", &[&f.base_url, &f.api_key]);
         let existing = library.custom_providers.iter().position(|old| {
             fields(old).is_ok_and(|old| old.base_url == f.base_url && old.api_key == f.api_key)
         });
@@ -139,10 +136,8 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
             p.name = library.custom_providers[i].name.clone();
             p.extra = library.custom_providers[i].extra.clone();
             library.custom_providers[i] = p.clone();
-        } else {
-            library.custom_providers.push(p.clone());
+            library.selected_custom = p.id;
         }
-        library.selected_custom = p.id;
     }
     AgentDraft::new(Agent::Codex, active, library)
 }
@@ -191,14 +186,7 @@ fn capture_official(library: &mut Library, doc: &DocumentMut, credentials: &Valu
                 .iter()
                 .position(|p| p.id == library.selected_official && p.account_id.is_none())
         });
-    let i = index.unwrap_or_else(|| {
-        library.official_accounts.push(Profile {
-            id: imported_id("official", &[account_id]),
-            name: Some(claims["email"].as_str().unwrap_or("官方账号").into()),
-            ..Default::default()
-        });
-        library.official_accounts.len() - 1
-    });
+    let Some(i) = index else { return Ok(()) };
     let p = &mut library.official_accounts[i];
     p.account_id = Some(account_id.into());
     p.email = claims["email"].as_str().map(str::to_owned);

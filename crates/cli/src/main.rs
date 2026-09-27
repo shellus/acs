@@ -168,9 +168,6 @@ fn confirm(yes: bool, message: &str) -> Result<()> {
     }
     Ok(())
 }
-fn short(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
-}
 /// 配置 ID 全局唯一，因此 ID、ID 前缀和名称足以定位客户端与模式，不必再写 kind。
 /// 按精确 ID、ID 前缀、精确名称、名称前缀逐级匹配；某一级命中多项时要求说得更具体。
 fn locate(draft: &Draft, query: &str) -> Result<(Agent, Mode, String)> {
@@ -198,9 +195,9 @@ fn locate(draft: &Draft, query: &str) -> Result<(Agent, Mode, String)> {
             [] => continue,
             [only] => return Ok((only.0, only.1, only.2.clone())),
             many => bail!(
-                "{query} 匹配到多项配置，请输入更完整的 ID：{}",
+                "{query} 匹配到多项配置，请使用以下 ID 之一：{}",
                 many.iter()
-                    .map(|(a, m, id, _)| format!("{} {} {}", a.label(), m.label(), short(id)))
+                    .map(|(a, m, id, _)| format!("{id}（{} {}）", a.label(), m.label()))
                     .collect::<Vec<_>>()
                     .join("、")
             ),
@@ -310,7 +307,7 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
             let (agent, mode, id) = locate(&draft, &target)?;
             confirm(
                 yes,
-                &format!("删除 {} 的配置 {} 并保存？", agent.label(), short(&id)),
+                &format!("删除 {} 的配置 {} 并保存？", agent.label(), id),
             )?;
             draft.agent_mut(agent).delete(mode, &id)?;
             save(&mut session, &revision, &draft, agent)
@@ -405,7 +402,7 @@ fn list(draft: &Draft, only: Option<Agent>) {
                 println!(
                     "    {} {}  {}  {}",
                     if selected { '*' } else { ' ' },
-                    short(&p.id),
+                    p.id,
                     name,
                     detail
                 );

@@ -265,7 +265,7 @@ fn partial_tokens_block_without_clearing_library() {
 }
 
 #[test]
-fn imported_official_identity_is_stable_without_writing() {
+fn unknown_official_account_is_not_added_to_the_library() {
     let (_dir, store) = fixture();
     fs::write(
         store.roots.codex.join("auth.json"),
@@ -275,26 +275,185 @@ fn imported_official_identity_is_stable_without_writing() {
     let before = store.snapshot().unwrap();
     let first = Session::open(store.clone()).unwrap();
     let second = Session::open(store.clone()).unwrap();
-    assert_eq!(
-        first.original.codex.library.selected_official,
-        second.original.codex.library.selected_official
-    );
+    assert!(first.original.codex.library.official_accounts.is_empty());
+    assert_eq!(first.original, second.original);
     assert_eq!(before, store.snapshot().unwrap());
 }
 #[test]
-fn external_api_import_preserves_existing_profile_identity() {
+fn unknown_external_api_does_not_create_a_profile() {
     let (_dir, store) = fixture();
     let mut s = Session::open(store.clone()).unwrap();
     let old_id = custom(&mut s);
     let doc = read(&store, "config.toml").replace("api.example.com", "other.example.com");
     fs::write(store.roots.codex.join("config.toml"), doc).unwrap();
     let s = Session::open(store).unwrap();
-    assert_eq!(s.original.codex.library.custom_providers.len(), 2);
-    assert_ne!(s.original.codex.library.selected_custom, old_id);
+    assert_eq!(s.original.codex.library.custom_providers.len(), 1);
+    assert_eq!(s.original.codex.library.selected_custom, old_id);
     assert_eq!(
         s.original.codex.custom_fields[&old_id].base_url,
         "https://api.example.com/v1"
     );
+}
+
+#[test]
+fn short_ids_are_unique_across_clients_and_modes_and_duplicates_never_save() {
+    let (_dir, store) = fixture();
+    let mut session = Session::open(store.clone()).unwrap();
+    let mut draft = session.original.clone();
+    let mut ids = std::collections::HashSet::new();
+    for agent in Agent::ALL {
+        let target = draft.agent_mut(agent);
+        let official_id = target.add(Mode::Official, "example account", None).unwrap();
+        let custom_id = target.add(Mode::Custom, "example API", None).unwrap();
+        for id in [&official_id, &custom_id] {
+            assert_eq!(id.len(), 8);
+            assert!(id.bytes().all(|c| c.is_ascii_hexdigit()));
+            assert!(ids.insert(id.clone()));
+        }
+        target.custom_fields.insert(
+            custom_id,
+            CustomFields {
+                provider_name: "example".into(),
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "example-key".into(),
+                model: "example-model".into(),
+                effort: "medium".into(),
+            },
+        );
+    }
+    session.save(&session.view().revision, &draft).unwrap();
+    let baseline = store.snapshot().unwrap();
+    for cross_client in [false, true] {
+        let mut invalid = session.original.clone();
+        let repeated = invalid.codex.library.official_accounts[0].id.clone();
+        let library = if cross_client {
+            &mut invalid.claude.library
+        } else {
+            &mut invalid.codex.library
+        };
+        let mode = if cross_client {
+            Mode::Official
+        } else {
+            Mode::Custom
+        };
+        library.profiles_mut(mode)[0].id = repeated.clone();
+        library.select(mode, repeated);
+        let error = session
+            .save(&session.view().revision, &invalid)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("全局唯一"), "{error}");
+        assert_eq!(baseline, store.snapshot().unwrap());
+        let libraries = acs_core::Libraries {
+            codex: invalid.codex.library,
+            claude: invalid.claude.library,
+        };
+        fs::write(
+            store.roots.acs.join("profiles.json"),
+            serde_json::to_vec(&libraries).unwrap(),
+        )
+        .unwrap();
+        let corrupted = store.snapshot().unwrap();
+        assert!(Session::open(store.clone())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("全局唯一"));
+        assert_eq!(corrupted, store.snapshot().unwrap());
+        fs::write(
+            store.roots.acs.join("profiles.json"),
+            baseline[0].as_ref().unwrap(),
+        )
+        .unwrap();
+    }
+    let mut invalid = session.original.clone();
+    invalid.codex.library.official_accounts[0].id = "a".repeat(32);
+    invalid.codex.library.selected_official = "a".repeat(32);
+    assert!(session
+        .save(&session.view().revision, &invalid)
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("8 位"));
+    assert_eq!(baseline, store.snapshot().unwrap());
+}
+
+#[test]
+fn claude_login_refresh_keeps_the_existing_id_and_unknown_accounts_are_not_added() {
+    let (_dir, store) = fixture();
+    let mut session = Session::open(store.clone()).unwrap();
+    let mut draft = session.original.clone();
+    let id = draft
+        .claude
+        .add(Mode::Official, "example account", None)
+        .unwrap();
+    session
+        .save_for(&session.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    let credentials_path = store.roots.claude.join(".credentials.json");
+    fs::write(
+        &credentials_path,
+        r#"{"claudeAiOauth":{"accessToken":"example-access","refreshToken":"example-refresh"}}"#,
+    )
+    .unwrap();
+    fs::write(&store.roots.claude_json, r#"{"oauthAccount":{"accountUuid":"example-account","emailAddress":"account@example.com"}}"#).unwrap();
+    let mut session = Session::open(store.clone()).unwrap();
+    assert_eq!(session.original.claude.library.selected_official, id);
+    assert_eq!(session.original.claude.library.official_accounts.len(), 1);
+    assert_eq!(
+        session.original.claude.library.official_accounts[0]
+            .account_id
+            .as_deref(),
+        Some("example-account")
+    );
+    session
+        .save_for(
+            &session.view().revision,
+            &session.original.clone(),
+            Agent::Claude,
+        )
+        .unwrap();
+    fs::write(
+        &credentials_path,
+        r#"{"claudeAiOauth":{"accessToken":"example-refreshed","refreshToken":"example-refresh"}}"#,
+    )
+    .unwrap();
+    let refreshed = Session::open(store.clone()).unwrap();
+    assert_eq!(
+        refreshed.original.claude.library.official_accounts[0].id,
+        id
+    );
+    assert!(refreshed.original.claude.library.official_accounts[0]
+        .official_auth
+        .as_ref()
+        .unwrap()
+        .contains("example-refreshed"));
+    fs::write(
+        &store.roots.claude_json,
+        r#"{"oauthAccount":{"accountUuid":"example-other"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        Session::open(store.clone())
+            .unwrap()
+            .original
+            .claude
+            .library
+            .official_accounts
+            .len(),
+        1
+    );
+    fs::remove_file(store.roots.acs.join("profiles.json")).unwrap();
+    let before = store.snapshot().unwrap();
+    assert!(Session::open(store.clone())
+        .unwrap()
+        .original
+        .claude
+        .library
+        .official_accounts
+        .is_empty());
+    assert_eq!(before, store.snapshot().unwrap());
 }
 #[test]
 fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
@@ -515,46 +674,4 @@ fn window_geometry_persists_without_disturbing_the_saved_file_baseline() {
     assert_eq!(store.window_state(), Some(state));
     // 窗口几何不属于目标文件基线，记住尺寸不得让已打开的草稿失效。
     session.save(&revision, &session.original.clone()).unwrap();
-}
-
-/// 2.x 的配置库位于 `~/.codex/launcher-profiles/modes.json`；新目录首次打开时
-/// 读取该文件作为初值，保存后自然落到 `~/.acs/profiles.json`，不写回旧位置。
-#[test]
-fn legacy_2x_library_is_migrated_once_into_the_acs_directory() {
-    let (_dir, store) = fixture();
-    let legacy = store.roots.codex.join("launcher-profiles/modes.json");
-    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    fs::write(
-        &legacy,
-        serde_json::to_vec(&json!({
-            "official_accounts": [{"id":"example-official","name":"example account"}],
-            "custom_providers": [{"id":"example-api","name":"example API","custom_key":"example-key","custom_model":"example-model"}],
-            "selected_official": "example-official",
-            "selected_custom": "example-api",
-            "custom_key": "stale top level value"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let mut session = Session::open(store.clone()).unwrap();
-    let codex = &session.original.codex.library;
-    assert_eq!(codex.custom_providers.len(), 1);
-    assert_eq!(codex.custom_providers[0].id, "example-api");
-    assert_eq!(codex.selected_custom, "example-api");
-    // 旧文件顶层残留字段在迁移时清理，不进入新配置库。
-    assert!(codex.extra.is_empty());
-    assert!(session.original.claude.library.custom_providers.is_empty());
-    session
-        .save(&session.view().revision, &session.original.clone())
-        .unwrap();
-    let migrated: Value =
-        serde_json::from_slice(&fs::read(store.roots.acs.join("profiles.json")).unwrap()).unwrap();
-    assert_eq!(
-        migrated["codex"]["custom_providers"][0]["id"],
-        "example-api"
-    );
-    // 迁移只读旧文件，不修改它。
-    assert!(fs::read_to_string(&legacy)
-        .unwrap()
-        .contains("stale top level value"));
 }

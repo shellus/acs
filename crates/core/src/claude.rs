@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        imported_id, json, nonempty, normalize_proxy, proxy_variables, Agent, AgentDraft,
-        CustomFields, Library, Mode, Profile,
+        json, nonempty, normalize_proxy, proxy_variables, Agent, AgentDraft, CustomFields, Library,
+        Mode, Profile,
     },
     storage::{Snapshot, CLAUDE_ACCOUNT, CLAUDE_CREDENTIALS, CLAUDE_SETTINGS},
 };
@@ -117,14 +117,12 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
     capture_official(&mut library, &credentials, &account, active)?;
     if active == Mode::Custom {
         let mut p = Profile {
-            name: Some("导入的 API".into()),
             custom_base_url: env(&settings, BASE_URL).as_str().map(str::to_owned),
             custom_key: env(&settings, TOKEN).as_str().map(str::to_owned),
             custom_model: settings["model"].as_str().map(str::to_owned),
             ..Default::default()
         };
         let f = fields(&p);
-        p.id = imported_id("custom", &[&f.base_url, &f.api_key]);
         let existing = library.custom_providers.iter().position(|old| {
             let old = fields(old);
             old.base_url == f.base_url && old.api_key == f.api_key
@@ -134,10 +132,8 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
             p.name = library.custom_providers[i].name.clone();
             p.extra = library.custom_providers[i].extra.clone();
             library.custom_providers[i] = p.clone();
-        } else {
-            library.custom_providers.push(p.clone());
+            library.selected_custom = p.id;
         }
-        library.selected_custom = p.id;
     }
     AgentDraft::new(Agent::Claude, active, library)
 }
@@ -175,22 +171,7 @@ fn capture_official(
                 .iter()
                 .position(|p| p.id == library.selected_official && p.account_id.is_none())
         });
-    let i = index.unwrap_or_else(|| {
-        library.official_accounts.push(Profile {
-            id: match account_id {
-                Some(id) => imported_id("official", &[id]),
-                None => uuid::Uuid::new_v4().simple().to_string(),
-            },
-            name: Some(
-                account["emailAddress"]
-                    .as_str()
-                    .unwrap_or("Claude 账号")
-                    .into(),
-            ),
-            ..Default::default()
-        });
-        library.official_accounts.len() - 1
-    });
+    let Some(i) = index else { return Ok(()) };
     let p = &mut library.official_accounts[i];
     p.account_id = account_id.map(str::to_owned);
     p.email = account["emailAddress"].as_str().map(str::to_owned);
