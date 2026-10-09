@@ -62,6 +62,9 @@ struct ApiFields {
     model: Option<String>,
     #[arg(short, long)]
     effort: Option<String>,
+    /// 此配置的 HTTP 代理，空字符串表示直连
+    #[arg(long)]
+    proxy: Option<String>,
 }
 impl ApiFields {
     fn apply(&self, f: &mut CustomFields) {
@@ -71,6 +74,7 @@ impl ApiFields {
             (&self.key, &mut f.api_key),
             (&self.model, &mut f.model),
             (&self.effort, &mut f.effort),
+            (&self.proxy, &mut f.proxy_url),
         ];
         for (value, slot) in pairs {
             if let Some(value) = value {
@@ -84,6 +88,7 @@ impl ApiFields {
             && self.key.is_none()
             && self.model.is_none()
             && self.effort.is_none()
+            && self.proxy.is_none()
     }
 }
 
@@ -125,7 +130,7 @@ enum Action {
         #[arg(short, long)]
         yes: bool,
     },
-    /// 设置当前客户端的官方代理偏好；空字符串禁用；不带参数只显示
+    /// 设置当前客户端官方账号共用的代理；空字符串禁用；不带参数只显示。自定义 API 用 edit --proxy
     Proxy { url: Option<String> },
     /// 修复 Codex 历史对话的 provider ID；先备份
     Repair {

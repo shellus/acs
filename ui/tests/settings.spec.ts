@@ -28,6 +28,7 @@ async function fixture(page: Page) {
           api_key: "example-key",
           model: "example-model",
           effort: "medium",
+          proxy_url: "",
         },
       },
     };
@@ -98,6 +99,7 @@ test("Claude edits stay in the Claude draft and survive switching clients", asyn
   await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "自定义 API", exact: true }).click();
   await page.getByLabel("API 地址", { exact: true }).fill("https://claude.example.com");
+  await page.getByLabel("HTTP 代理（可留空）", { exact: true }).fill("http://127.0.0.1:7890");
   await page.getByRole("button", { name: "保存配置", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("已保存");
   await expect(page.getByLabel("API 地址", { exact: true })).toHaveValue("https://claude.example.com");
@@ -105,6 +107,8 @@ test("Claude edits stay in the Claude draft and survive switching clients", asyn
   const payload = await page.evaluate(() => (window as any).calls.find((c: any) => c.command === "save").args.draft);
   expect(payload.codex.custom_fields["example-api"].base_url).toBe("https://api.example.com/v1");
   expect(payload.claude.custom_fields["example-api"].base_url).toBe("https://claude.example.com");
+  expect(payload.claude.custom_fields["example-api"].proxy_url).toBe("http://127.0.0.1:7890");
+  expect(payload.codex.custom_fields["example-api"].proxy_url).toBe("");
   await page.getByRole("button", { name: "启动", exact: true }).click();
   expect(await calls(page, "launch")).toBe(1);
   await page.getByRole("tab", { name: "Codex", exact: true }).click();

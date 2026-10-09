@@ -55,15 +55,15 @@ impl Settings {
                 self.roots.codex.to_string_lossy().into(),
             ));
         }
-        if self.mode == Mode::Custom {
-            if desktop {
+        let proxy = normalize_proxy(&self.proxy)?;
+        if proxy.is_empty() {
+            // 直连时 OpenAI 云端域名会让 Electron 外壳长时间卡住，只能阻断；
+            // 走代理时这些域名可正常访问，不再阻断。
+            if desktop && self.mode == Mode::Custom {
                 plan.args
                     .push(format!("--host-resolver-rules={RESOLVER_RULES}"));
             }
-            return Ok(plan);
-        }
-        let proxy = normalize_proxy(&self.proxy)?;
-        if !proxy.is_empty() {
+        } else {
             if desktop {
                 plan.args.push(format!("--proxy-server={proxy}"));
             }

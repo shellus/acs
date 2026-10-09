@@ -179,6 +179,7 @@ export default function App() {
               api_key: "",
               model: "",
               effort: "medium",
+              proxy_url: "",
             };
     });
   const remove = () => {
@@ -441,11 +442,17 @@ export default function App() {
                             onChange={(v) => field("base_url", v)}
                           />
                           <Field
-                            wide
                             label="API Key"
                             value={fields.api_key}
                             disabled={!!busy}
                             onChange={(v) => field("api_key", v)}
+                          />
+                          <Field
+                            label="HTTP 代理（可留空）"
+                            value={fields.proxy_url}
+                            placeholder="留空直连，如 http://127.0.0.1:7890"
+                            disabled={!!busy}
+                            onChange={(v) => field("proxy_url", v)}
                           />
                           <Field
                             label="模型"

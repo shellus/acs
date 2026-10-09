@@ -53,6 +53,7 @@ pub fn fields(p: &Profile) -> Result<CustomFields> {
         api_key: p.custom_key.clone().unwrap_or_default(),
         model: p.custom_model.clone().unwrap_or_default(),
         effort: p.custom_effort.clone().unwrap_or_else(|| "medium".into()),
+        proxy_url: p.custom_proxy_url.clone().unwrap_or_default(),
     })
 }
 pub fn validate_fields(f: &CustomFields) -> Result<()> {
@@ -135,6 +136,8 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
             p.id = library.custom_providers[i].id.clone();
             p.name = library.custom_providers[i].name.clone();
             p.extra = library.custom_providers[i].extra.clone();
+            // 代理只写在 .env 的受管区块里，沿用配置库的值。
+            p.custom_proxy_url = library.custom_providers[i].custom_proxy_url.clone();
             library.custom_providers[i] = p.clone();
             library.selected_custom = p.id;
         }
@@ -253,14 +256,7 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
         doc["model_reasoning_effort"] = value(&f.effort);
         next_auth = jsonv!({"auth_mode":"apikey","OPENAI_API_KEY":f.api_key});
     }
-    let env = proxy_env(
-        text(&baseline[CODEX_ENV])?,
-        if draft.mode == Mode::Official {
-            library.official_proxy_url.as_deref().unwrap_or_default()
-        } else {
-            ""
-        },
-    )?;
+    let env = proxy_env(text(&baseline[CODEX_ENV])?, library.proxy(draft.mode))?;
     after[CODEX_CONFIG] = Some(doc.to_string().into_bytes());
     after[CODEX_AUTH] = Some(serde_json::to_vec_pretty(&next_auth)?);
     after[CODEX_ENV] = if baseline[CODEX_ENV].is_none() && env.is_empty() {

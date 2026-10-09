@@ -64,6 +64,26 @@ fn manages_both_clients_without_launching_and_requires_repair_confirmation() {
         view["draft"]["codex"]["custom_fields"][&id]["model"],
         "example-other-model"
     );
+    ok(
+        dir.path(),
+        &[
+            "edit",
+            "renamed example",
+            "--proxy",
+            "http://127.0.0.1:7890",
+        ],
+    );
+    let view: serde_json::Value = serde_json::from_slice(&ok(dir.path(), &["export"])).unwrap();
+    assert_eq!(
+        view["draft"]["codex"]["custom_fields"][&id]["proxy_url"],
+        "http://127.0.0.1:7890"
+    );
+    // 自定义 API 的代理不影响官方账号共用的代理。
+    assert_eq!(
+        String::from_utf8_lossy(&ok(dir.path(), &["proxy"])).trim(),
+        ""
+    );
+    ok(dir.path(), &["edit", "renamed example", "--proxy", ""]);
     ok(dir.path(), &["use", "renamed example"]);
     // 客户端选择只影响 --agent 指定的那一个。
     ok(

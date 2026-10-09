@@ -12,6 +12,7 @@ export interface Profile {
   custom_effort?: string | null;
   custom_base_url?: string | null;
   model_providers_toml?: string | null;
+  custom_proxy_url?: string | null;
 }
 export interface Fields {
   provider_name: string;
@@ -19,6 +20,7 @@ export interface Fields {
   api_key: string;
   model: string;
   effort: string;
+  proxy_url: string;
 }
 export interface Library {
   official_accounts: Profile[];

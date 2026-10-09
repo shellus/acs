@@ -26,6 +26,7 @@ fn custom(session: &mut Session) -> String {
             api_key: "example-key".into(),
             model: "example-model".into(),
             effort: "medium".into(),
+            ..Default::default()
         },
     );
     session.save(&session.view().revision, &draft).unwrap();
@@ -318,6 +319,7 @@ fn short_ids_are_unique_across_clients_and_modes_and_duplicates_never_save() {
                 api_key: "example-key".into(),
                 model: "example-model".into(),
                 effort: "medium".into(),
+                ..Default::default()
             },
         );
     }
@@ -490,6 +492,104 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
     assert_eq!(env_before, std::env::vars_os().collect());
     let cli = settings.plan("example".into(), false, vec![]).unwrap();
     assert!(cli.args.is_empty());
+}
+#[test]
+fn custom_api_proxy_is_per_profile_and_replaces_domain_blocking() {
+    const PROXY: &str = "http://127.0.0.1:7890";
+    let (_dir, store) = fixture();
+    let mut s = Session::open(store.clone()).unwrap();
+    let id = custom(&mut s);
+    let direct = s
+        .launch_settings(&s.view().revision, &s.original.clone())
+        .unwrap();
+    let plan = direct.plan("example".into(), true, vec![]).unwrap();
+    assert!(plan.args[0].starts_with("--host-resolver-rules="));
+    assert!(plan.env.iter().all(|(k, _)| k != "HTTPS_PROXY"));
+
+    let mut draft = s.original.clone();
+    draft.codex.custom_fields.get_mut(&id).unwrap().proxy_url = "ftp://example".into();
+    let before = store.snapshot().unwrap();
+    assert!(s.save(&s.view().revision, &draft).is_err());
+    assert_eq!(before, store.snapshot().unwrap());
+
+    draft.codex.custom_fields.get_mut(&id).unwrap().proxy_url = format!("{PROXY}/");
+    s.save(&s.view().revision, &draft).unwrap();
+    assert!(read(&store, ".env").contains(&format!("HTTPS_PROXY={PROXY}")));
+    let mut s = Session::open(store.clone()).unwrap();
+    assert_eq!(s.original.codex.custom_fields[&id].proxy_url, PROXY);
+    // 无变更再次保存保持幂等。
+    let before = store.snapshot().unwrap();
+    s.save(&s.view().revision, &s.original.clone()).unwrap();
+    assert_eq!(before, store.snapshot().unwrap());
+    let proxied = s
+        .launch_settings(&s.view().revision, &s.original.clone())
+        .unwrap();
+    let plan = proxied.plan("example".into(), true, vec![]).unwrap();
+    assert_eq!(plan.args, vec![format!("--proxy-server={PROXY}")]);
+    assert!(plan
+        .env
+        .contains(&("HTTPS_PROXY".to_string(), PROXY.to_string())));
+
+    // 官方账号不继承自定义 API 的代理。
+    let mut draft = s.original.clone();
+    draft.codex.mode = Mode::Official;
+    draft
+        .codex
+        .add(Mode::Official, "example account", None)
+        .unwrap();
+    s.save(&s.view().revision, &draft).unwrap();
+    assert!(!read(&store, ".env").contains("HTTPS_PROXY"));
+
+    let mut draft = s.original.clone();
+    draft.claude.mode = Mode::Custom;
+    let claude = draft
+        .claude
+        .add(Mode::Custom, "example Claude", None)
+        .unwrap();
+    draft.claude.custom_fields.insert(
+        claude.clone(),
+        CustomFields {
+            base_url: "https://claude.example.com".into(),
+            api_key: "example-claude-key".into(),
+            proxy_url: PROXY.into(),
+            ..Default::default()
+        },
+    );
+    s.save_for(&s.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    let settings: Value =
+        serde_json::from_slice(&fs::read(store.roots.claude.join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(settings["env"]["HTTPS_PROXY"], PROXY);
+    assert_eq!(
+        settings["env"]["ANTHROPIC_BASE_URL"],
+        "https://claude.example.com"
+    );
+    let mut s = Session::open(store.clone()).unwrap();
+    assert_eq!(s.original.claude.custom_fields[&claude].proxy_url, PROXY);
+    let launch = s
+        .launch_settings_for(&s.view().revision, &s.original.clone(), Agent::Claude)
+        .unwrap();
+    assert_eq!(launch.proxy, PROXY);
+
+    let mut draft = s.original.clone();
+    draft
+        .claude
+        .custom_fields
+        .get_mut(&claude)
+        .unwrap()
+        .proxy_url = String::new();
+    s.save_for(&s.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    let settings: Value =
+        serde_json::from_slice(&fs::read(store.roots.claude.join("settings.json")).unwrap())
+            .unwrap();
+    assert!(settings["env"]["HTTPS_PROXY"].is_null());
+    assert!(settings["env"]["NODE_USE_ENV_PROXY"].is_null());
+    assert_eq!(
+        settings["env"]["ANTHROPIC_AUTH_TOKEN"],
+        "example-claude-key"
+    );
 }
 #[test]
 fn invalid_proxy_marker_blocks_all_four_file_changes() {

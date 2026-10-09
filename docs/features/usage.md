@@ -6,7 +6,7 @@
 
 | 文件 | 归属 | 用途 |
 | --- | --- | --- |
-| `~/.acs/profiles.json` | 本程序 | 两个客户端的账号、API 配置、提供者快照与官方代理偏好 |
+| `~/.acs/profiles.json` | 本程序 | 两个客户端的账号、API 配置、提供者快照与代理偏好 |
 | `~/.acs/window.json` | 本程序 | 桌面窗口的尺寸、位置与最大化状态，仅本机有效 |
 | `~/.acs/logs/acs.log` | 本程序 | 操作失败诊断 |
 | `~/.acs/backups_state/provider-sync` | 本程序 | 历史修复前的 rollout 与 SQLite 一致性备份 |
@@ -29,7 +29,9 @@ API 地址使用 `https://主机/路径/v1`（Claude 填 `https://主机` 即可
 
 Codex 的登录、刷新和联网验证由 Codex 完成，Claude 由 Claude Code 完成。新增账号不携带其他账号旧令牌；客户端明确退出登录后，不再恢复该账号旧凭据。部分损坏的令牌阻止读取，避免误判为退出登录。
 
-官方 HTTP 代理按客户端独立设置，只影响新启动客户端、子进程和读取同一配置的 CLI，不修改系统代理或父终端环境。Codex 的代理写在 `.env` 的托管区块，Claude 的代理写在 `settings.json` 的 `ANTHROPIC_*` 同级环境变量。清空代理或切到 API 模式时，仅移除管理的键，原有内容保留；原有代理变量仍可能生效。
+官方账号的 HTTP 代理按客户端设置，同一客户端的官方账号共用；自定义 API 的代理按配置单独设置，部署在海外的中转站等需要代理时填写，留空直连。生效的代理只影响新启动客户端、子进程和读取同一配置的 CLI，不修改系统代理或父终端环境。Codex 的代理写在 `.env` 的托管区块，Claude 的代理写在 `settings.json` 的 `ANTHROPIC_*` 同级环境变量。当前模式的代理为空时，仅移除管理的键，原有内容保留；原有代理变量仍可能生效。
+
+Codex 桌面版在自定义 API 模式直连时阻断 Electron 外壳的 OpenAI 云端域名，避免请求长时间卡住；该配置设置了代理时改为通过代理访问，不再阻断。
 
 窗口尺寸、位置和最大化状态在退出时记住，下次打开按记住的几何还原；记住的位置不在任何显示器上时改由系统摆放。最大化或最小化期间的尺寸不覆盖手动调整过的还原尺寸。
 
@@ -59,6 +61,7 @@ acs add codex custom "example copy" --copy example-api
 ```sh
 acs edit example-api --model example-other-model
 acs edit example-api --key example-new-key
+acs edit example-api --proxy http://127.0.0.1:7890
 acs use example-api
 acs mv example-api "example renamed"
 acs rm example-api
@@ -72,7 +75,7 @@ acs proxy --agent claude http://127.0.0.1:7890
 acs proxy ""
 ```
 
-不带地址时 `proxy` 只显示当前客户端的代理偏好。地址必须是 `http://主机:端口`，不含账号密码、路径或查询参数。
+`proxy` 只管理官方账号共用的代理，不带地址时显示当前值；自定义 API 的代理用 `add`/`edit` 的 `--proxy` 设置，空字符串表示直连。地址必须是 `http://主机:端口`，不含账号密码、路径或查询参数。
 
 ```sh
 acs run

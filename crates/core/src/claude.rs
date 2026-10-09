@@ -45,7 +45,7 @@ fn set_model(settings: &mut Value, model: Option<&str>) {
         }
     }
 }
-/// 代理由本程序接管：官方模式写入受管键，自定义模式移除它们。
+/// 代理由本程序接管：写入当前模式生效的代理，留空时移除受管键。
 fn set_proxy(settings: &mut Value, proxy: &str) {
     for (key, value) in proxy_variables(proxy) {
         set_env(
@@ -74,6 +74,7 @@ pub fn fields(p: &Profile) -> CustomFields {
         api_key: p.custom_key.clone().unwrap_or_default(),
         model: p.custom_model.clone().unwrap_or_default(),
         effort: String::new(),
+        proxy_url: p.custom_proxy_url.clone().unwrap_or_default(),
     }
 }
 pub fn validate_fields(f: &CustomFields) -> Result<()> {
@@ -120,6 +121,7 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
             custom_base_url: env(&settings, BASE_URL).as_str().map(str::to_owned),
             custom_key: env(&settings, TOKEN).as_str().map(str::to_owned),
             custom_model: settings["model"].as_str().map(str::to_owned),
+            custom_proxy_url: env(&settings, "HTTP_PROXY").as_str().map(str::to_owned),
             ..Default::default()
         };
         let f = fields(&p);
@@ -209,10 +211,6 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
         set_env(&mut settings, TOKEN, None);
         set_env(&mut settings, BASE_URL, None);
         set_model(&mut settings, draft.library.official_model.as_deref());
-        set_proxy(
-            &mut settings,
-            draft.library.official_proxy_url.as_deref().unwrap_or(""),
-        );
     } else {
         let f = fields(&target);
         f.validate(Agent::Claude)?;
@@ -220,8 +218,8 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
         set_env(&mut settings, BASE_URL, Some(&f.base_url));
         set_model(&mut settings, Some(&f.model));
         // 官方凭据原样保留，切回官方账号时不必重新登录。
-        set_proxy(&mut settings, "");
     }
+    set_proxy(&mut settings, draft.library.proxy(draft.mode));
     let mut bytes = serde_json::to_vec_pretty(&settings)?;
     bytes.push(b'\n');
     after[CLAUDE_SETTINGS] = Some(bytes);

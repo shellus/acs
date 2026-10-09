@@ -80,6 +80,8 @@ pub struct Profile {
     /// Claude 的 API 地址；Codex 的地址在 `model_providers_toml` 里。
     pub custom_base_url: Option<String>,
     pub model_providers_toml: Option<String>,
+    /// 自定义 API 自己的 HTTP 代理；海外中转站等需要代理，留空直连。
+    pub custom_proxy_url: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -109,6 +111,8 @@ pub struct CustomFields {
     pub api_key: String,
     pub model: String,
     pub effort: String,
+    #[serde(default)]
+    pub proxy_url: String,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -221,6 +225,16 @@ impl Library {
     }
     pub fn validate(&self) -> Result<()> {
         validate_libraries([self])
+    }
+    /// 该模式生效的代理：官方账号共用客户端代理，自定义 API 使用选中配置自己的代理。
+    pub fn proxy(&self, mode: Mode) -> &str {
+        match mode {
+            Mode::Official => self.official_proxy_url.as_deref(),
+            Mode::Custom => self
+                .selected(Mode::Custom)
+                .and_then(|p| p.custom_proxy_url.as_deref()),
+        }
+        .unwrap_or_default()
     }
 }
 impl AgentDraft {
@@ -357,12 +371,11 @@ impl CustomFields {
     }
     pub fn apply(&self, agent: Agent, p: &mut Profile) -> Result<()> {
         match agent {
-            Agent::Codex => codex::apply_fields(self, p),
-            Agent::Claude => {
-                claude::apply_fields(self, p);
-                Ok(())
-            }
+            Agent::Codex => codex::apply_fields(self, p)?,
+            Agent::Claude => claude::apply_fields(self, p),
         }
+        p.custom_proxy_url = Some(normalize_proxy(&self.proxy_url)?);
+        Ok(())
     }
 }
 
@@ -443,14 +456,7 @@ impl Session {
         Ok(crate::launch::Settings {
             agent,
             mode,
-            proxy: normalize_proxy(
-                self.original
-                    .agent(agent)
-                    .library
-                    .official_proxy_url
-                    .as_deref()
-                    .unwrap_or_default(),
-            )?,
+            proxy: normalize_proxy(self.original.agent(agent).library.proxy(mode))?,
             roots: self.store.roots.clone(),
         })
     }

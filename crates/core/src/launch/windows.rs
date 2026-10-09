@@ -297,7 +297,12 @@ $value = @{{ home = $env:CODEX_HOME; proxy = $env:HTTPS_PROXY; key = $env:OPENAI
         let settings = Settings {
             agent: Agent::Codex,
             mode,
-            proxy: "http://proxy.example:8080".into(),
+            // 自定义模式的直连路径；带代理的自定义模式与官方模式共用同一条注入逻辑。
+            proxy: if mode == Mode::Official {
+                "http://proxy.example:8080".into()
+            } else {
+                String::new()
+            },
             roots: Roots::under(directory),
         };
         // The probe is a console program, so desktop Chromium flags are verified
