@@ -47,7 +47,7 @@ GUI 保存请求显式携带当前客户端；校验和应用当前客户端，�
 
 `~/.claude.json` 由 Claude Code 持续写入，因此对它只把 `oauthAccount` 一个顶层字段纳入基线并局部改写，其余字段原样保留。
 
-`toml_edit` 保留未知字段、其他提供者和嵌套表。官方模式只留下精简 custom 定义；完整片段保存在 API 条目的 `model_providers_toml`，重复保存不以精简定义覆盖快照。显示名称不是 ID；名称精确为 `OpenAI` 可能触发上游特殊行为，本工具不将它解释为模式选择。
+`toml_edit` 只替换 `model_providers.custom`，两种模式下都保留目标配置中其他 provider 及其注释、字段和嵌套表。API 条目的 `model_providers_toml` 只保存 custom 完整片段，保留其未知字段和嵌套表；其他 provider 属于用户，不进入快照。官方模式将活动 custom 精简为名称、协议与官方认证标记，重复保存不以精简定义覆盖快照；自定义模式恢复 custom 快照并更新表单字段。显示名称不是 ID；名称精确为 `OpenAI` 可能触发上游特殊行为，本工具不将它解释为模式选择。
 
 Codex 认证由 `auth.json` 决定。不写 forced_login_method；显式限制、非 file 存储、选中的 profile、冲突路由或 custom 认证覆盖阻止应用。官方启动不携带自定义 Key、地址或域名阻断；自定义 API 直连时桌面启动阻断 OpenAI 云端域名，配置了代理时改用 `--proxy-server` 与代理环境变量，不再阻断；允许无令牌进入登录，部分损坏令牌阻止操作。JWT 只用于身份提示。
 
@@ -59,7 +59,9 @@ Claude 认证由 `settings.json` 的 `ANTHROPIC_*` 与 `.credentials.json` 共�
 
 ## 数据迁移
 
-配置库只读取 `~/.acs/profiles.json`，缺失时从空库开始，不扫描旧配置库或自动导入账号。既有数据的导入、ID 重编号在升级时独立执行一次：备份原文件，同步修改配置 ID 和选中引用，保留其他字段；不在程序中保留兼容分支或升级测试。旧 `.env` 的 `# BEGIN CHATGPT API ONLY PROXY` 区块仍在保存时按标记清理，避免残留代理生效。
+配置库只读取 `~/.acs/profiles.json`，缺失时从空库开始，不扫描旧配置库或自动导入账号。既有数据的导入、ID 重编号在升级时独立执行一次：备份原文件，同步修改配置 ID 和选中引用，保留其他字段；不在程序中保留兼容分支或升级测试。
+
+旧的 provider 快照在升级时独立清理一次：备份 `profiles.json`，将 Codex API 条目的 `model_providers_toml` 缩减为 custom 表及其嵌套内容，其他字段和目标 `config.toml` 不变。旧快照中的其他 provider 不自动恢复到目标配置，由用户自行决定保留内容。旧 `.env` 的 `# BEGIN CHATGPT API ONLY PROXY` 区块仍在保存时按标记清理，避免残留代理生效。
 
 ## 历史修复
 

@@ -24,6 +24,8 @@ Codex 与 Claude 各自独立生效：可以 Codex 停在官方账号，同时 C
 
 官方账号通过官方客户端登录。新增账号保存后启动即可登录；本地存在凭据不代表账号有效。官方模式可设置客户端共用的 HTTP 代理，每条自定义 API 配置也可单独设置代理（海外中转站等）。Codex 自定义模式直连时只阻断 Electron 外壳的指定云端域名，不阻断内置 app-server 访问自定义 API；配置了代理时改走代理，不再阻断。
 
+Codex 只托管 `model_providers.custom`；手工添加的其他 provider 在保存和模式切换时原样保留，不进入 acs 配置快照。
+
 关闭按钮、标题栏和 Esc 共用草稿确认。只有显式“修复对话”才改写 Codex 历史 provider ID，修复前创建备份。
 
 ![官方账号设置](docs/images/official-mode.png)

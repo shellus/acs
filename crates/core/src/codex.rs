@@ -108,8 +108,11 @@ fn ensure_custom(doc: &mut DocumentMut) -> Result<()> {
 }
 fn provider_snapshot(doc: &DocumentMut) -> String {
     let mut out = DocumentMut::new();
-    if let Some(p) = doc.get("model_providers") {
-        out["model_providers"] = p.clone();
+    if let Some(custom) = doc.get("model_providers").and_then(|p| p.get("custom")) {
+        let mut providers = Table::new();
+        providers.set_implicit(true);
+        providers.insert("custom", custom.clone());
+        out["model_providers"] = Item::Table(providers);
     }
     out.to_string()
 }
@@ -205,7 +208,8 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
     let target = draft.resolve()?;
     let library = &draft.library;
     let mut next_auth;
-    doc.remove("model_providers");
+    ensure_custom(&mut doc)?;
+    doc["model_providers"]["custom"] = Item::Table(Table::new());
     if draft.mode == Mode::Official {
         next_auth = json(
             &Some(
@@ -234,7 +238,6 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
                 doc[k] = value(v);
             }
         }
-        ensure_custom(&mut doc)?;
         let name = library
             .selected(Mode::Custom)
             .map(fields)
@@ -249,7 +252,7 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
         let f = fields(&target)?;
         f.validate(Agent::Codex)?;
         let providers = parse_doc(target.model_providers_toml.as_deref().unwrap_or_default())?;
-        doc["model_providers"] = providers["model_providers"].clone();
+        doc["model_providers"]["custom"] = providers["model_providers"]["custom"].clone();
         validate_custom_overrides(&doc)?;
         doc["model_provider"] = value("custom");
         doc["model"] = value(&f.model);

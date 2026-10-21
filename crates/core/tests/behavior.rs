@@ -188,7 +188,7 @@ fn provider_snapshot_roundtrip_preserves_nested_unknown_values() {
         .model_providers_toml
         .as_mut()
         .unwrap()
-        .push_str("\n[model_providers.custom.http_headers]\n\"X-Example\" = \"test\"\n[model_providers.other]\nname='example other'\nbase_url='https://other.example.com/v1'\n");
+        .push_str("\n[model_providers.custom.http_headers]\n\"X-Example\" = \"test\"\n");
     s.save(&s.view().revision, &draft).unwrap();
     let original = read(&store, "config.toml");
     official(&mut s);
@@ -203,7 +203,6 @@ fn provider_snapshot_roundtrip_preserves_nested_unknown_values() {
     s.save(&s.view().revision, &draft).unwrap();
     let restored = read(&store, "config.toml");
     assert!(restored.contains("X-Example"));
-    assert!(restored.contains("other.example.com"));
     assert_eq!(
         original
             .parse::<toml_edit::DocumentMut>()
@@ -214,6 +213,57 @@ fn provider_snapshot_roundtrip_preserves_nested_unknown_values() {
             .unwrap()
             .to_string()
     );
+}
+#[test]
+fn mode_switches_preserve_user_providers_without_snapshotting_them() {
+    let (_dir, store) = fixture();
+    let user_config = "# User-owned provider\n[model_providers.other]\nname = 'example other'\nbase_url = 'https://other.example.com/v1'\nenv_key = 'EXAMPLE_API_KEY'\n[model_providers.other.http_headers]\n'X-Example' = 'user value'\n[model_providers.another]\nname = 'example another'\n[profiles.example]\nmodel_provider = 'other'\nmodel = 'example-model'\n";
+    fs::write(store.roots.codex.join("config.toml"), user_config).unwrap();
+    let mut s = Session::open(store.clone()).unwrap();
+    let id = custom(&mut s);
+    let assert_user_owned = |s: &Session| {
+        let config = read(&store, "config.toml");
+        let actual = config.parse::<toml_edit::DocumentMut>().unwrap();
+        let expected = user_config.parse::<toml_edit::DocumentMut>().unwrap();
+        assert!(config.contains("# User-owned provider"));
+        for provider in ["other", "another"] {
+            assert_eq!(
+                actual["model_providers"][provider].to_string(),
+                expected["model_providers"][provider].to_string()
+            );
+        }
+        assert_eq!(
+            actual["profiles"].to_string(),
+            expected["profiles"].to_string()
+        );
+        let library = fs::read_to_string(store.roots.acs.join("profiles.json")).unwrap();
+        assert!(!library.contains("model_providers.other"));
+        assert!(!library.contains("model_providers.another"));
+        assert!(!library.contains("profiles.example"));
+        for profile in &s.original.codex.library.custom_providers {
+            let snapshot = profile.model_providers_toml.as_ref().unwrap();
+            let doc = snapshot.parse::<toml_edit::DocumentMut>().unwrap();
+            let providers = doc["model_providers"].as_table().unwrap();
+            assert_eq!(providers.len(), 1);
+            assert!(providers.contains_key("custom"));
+        }
+    };
+    assert_user_owned(&s);
+    official(&mut s);
+    assert_user_owned(&s);
+    s.save(&s.view().revision, &s.original.clone()).unwrap();
+    assert_user_owned(&s);
+    // Reopen to verify persisted snapshots and fresh target baselines.
+    let mut s = Session::open(store.clone()).unwrap();
+    let mut draft = s.original.clone();
+    draft.codex.mode = Mode::Custom;
+    draft.codex.library.selected_custom = id;
+    s.save(&s.view().revision, &draft).unwrap();
+    assert_user_owned(&s);
+    let before = store.snapshot().unwrap();
+    s.save(&s.view().revision, &s.original.clone()).unwrap();
+    assert_eq!(before, store.snapshot().unwrap());
+    assert_user_owned(&s);
 }
 #[test]
 fn auth_refresh_capture_and_logout_do_not_restore_old_tokens() {
