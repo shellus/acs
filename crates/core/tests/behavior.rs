@@ -431,6 +431,139 @@ fn short_ids_are_unique_across_clients_and_modes_and_duplicates_never_save() {
     assert_eq!(baseline, store.snapshot().unwrap());
 }
 
+fn desktop_json(store: &Store, path: &str) -> Value {
+    serde_json::from_slice(&fs::read(store.roots.claude_desktop.join(path)).unwrap()).unwrap()
+}
+#[test]
+fn claude_desktop_follows_mode_and_preserves_user_entries() {
+    let (_dir, store) = fixture();
+    let desktop = &store.roots.claude_desktop;
+    let profile_path = format!(
+        "configLibrary/{}.json",
+        acs_core::storage::DESKTOP_PROFILE_ID
+    );
+    // 未用过桌面版 3P 时，官方模式保存不创建桌面版文件。
+    let mut session = Session::open(store.clone()).unwrap();
+    let mut draft = session.original.clone();
+    draft
+        .claude
+        .add(Mode::Official, "example account", None)
+        .unwrap();
+    session
+        .save_for(&session.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    assert!(!desktop.exists());
+
+    fs::create_dir_all(desktop.join("configLibrary")).unwrap();
+    fs::write(
+        desktop.join("claude_desktop_config.json"),
+        r#"{"preferences":{"example":true}}"#,
+    )
+    .unwrap();
+    fs::write(
+        desktop.join("configLibrary/_meta.json"),
+        r#"{"appliedId":"11111111-1111-4111-8111-111111111111","entries":[{"id":"11111111-1111-4111-8111-111111111111","name":"Default"}]}"#,
+    )
+    .unwrap();
+    fs::write(desktop.join(&profile_path), r#"{"exampleUserKey":1}"#).unwrap();
+    let mut session = Session::open(store.clone()).unwrap();
+    let mut draft = session.original.clone();
+    draft.claude.mode = Mode::Custom;
+    let id = draft
+        .claude
+        .add(Mode::Custom, "example Claude", None)
+        .unwrap();
+    draft.claude.custom_fields.insert(
+        id.clone(),
+        CustomFields {
+            base_url: "https://claude.example.com".into(),
+            api_key: "example-claude-key".into(),
+            model: "example-model".into(),
+            ..Default::default()
+        },
+    );
+    session
+        .save_for(&session.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    let config = desktop_json(&store, "claude_desktop_config.json");
+    assert_eq!(config["deploymentMode"], "3p");
+    assert_eq!(config["preferences"]["example"], true);
+    let meta = desktop_json(&store, "configLibrary/_meta.json");
+    assert_eq!(meta["appliedId"], acs_core::storage::DESKTOP_PROFILE_ID);
+    assert_eq!(meta["entries"].as_array().unwrap().len(), 2);
+    let profile = desktop_json(&store, &profile_path);
+    assert_eq!(profile["inferenceProvider"], "gateway");
+    assert_eq!(
+        profile["inferenceGatewayBaseUrl"],
+        "https://claude.example.com"
+    );
+    assert_eq!(profile["inferenceGatewayApiKey"], "example-claude-key");
+    assert_eq!(profile["inferenceGatewayAuthScheme"], "bearer");
+    assert_eq!(profile["exampleUserKey"], 1);
+    // 非 Claude 名称的模型会让桌面版拒收整个列表，交给模型发现。
+    assert!(profile.get("inferenceModels").is_none());
+    session
+        .launch_settings_for(&session.view().revision, &session.original, Agent::Claude)
+        .unwrap();
+
+    let before = store.snapshot().unwrap();
+    session
+        .save_for(
+            &session.view().revision,
+            &session.original.clone(),
+            Agent::Claude,
+        )
+        .unwrap();
+    assert_eq!(before, store.snapshot().unwrap());
+
+    let mut draft = session.original.clone();
+    draft.claude.custom_fields.get_mut(&id).unwrap().model = "claude-sonnet-5".into();
+    session
+        .save_for(&session.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    assert_eq!(
+        desktop_json(&store, &profile_path)["inferenceModels"],
+        json!(["claude-sonnet-5"])
+    );
+
+    // 桌面版自己切回 1P 后，自定义模式的启动被阻止，等待重新保存。
+    let mut config = desktop_json(&store, "claude_desktop_config.json");
+    config["deploymentMode"] = json!("1p");
+    fs::write(
+        desktop.join("claude_desktop_config.json"),
+        config.to_string(),
+    )
+    .unwrap();
+    let session_after = Session::open(store.clone()).unwrap();
+    assert!(session_after
+        .launch_settings_for(
+            &session_after.view().revision,
+            &session_after.original,
+            Agent::Claude
+        )
+        .is_err());
+
+    let mut session = session_after;
+    let mut draft = session.original.clone();
+    draft.claude.mode = Mode::Official;
+    session
+        .save_for(&session.view().revision, &draft, Agent::Claude)
+        .unwrap();
+    assert_eq!(
+        desktop_json(&store, "claude_desktop_config.json")["deploymentMode"],
+        "1p"
+    );
+    let meta = desktop_json(&store, "configLibrary/_meta.json");
+    assert_eq!(meta["appliedId"], "11111111-1111-4111-8111-111111111111");
+    assert_eq!(meta["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        desktop_json(&store, &profile_path),
+        json!({"exampleUserKey": 1})
+    );
+    session
+        .launch_settings_for(&session.view().revision, &session.original, Agent::Claude)
+        .unwrap();
+}
 #[test]
 fn claude_login_refresh_keeps_the_existing_id_and_unknown_accounts_are_not_added() {
     let (_dir, store) = fixture();
@@ -542,6 +675,23 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
     assert_eq!(env_before, std::env::vars_os().collect());
     let cli = settings.plan("example".into(), false, vec![]).unwrap();
     assert!(cli.args.is_empty());
+    // Claude 桌面版 3P 不访问 OpenAI 域名，直连时不加阻断；代理同样走 --proxy-server。
+    for proxy in ["", "http://127.0.0.1:7890"] {
+        let claude = acs_core::launch::Settings {
+            agent: Agent::Claude,
+            mode: Mode::Custom,
+            proxy: proxy.into(),
+            roots: Roots::under(Path::new("example")),
+        };
+        let plan = claude.plan("example".into(), true, vec![]).unwrap();
+        assert!(plan
+            .args
+            .iter()
+            .all(|a| !a.starts_with("--host-resolver-rules")));
+        assert_eq!(plan.args.is_empty(), proxy.is_empty());
+        assert!(plan.remove_env.contains(&"ANTHROPIC_AUTH_TOKEN".into()));
+        assert!(plan.env.iter().all(|(k, _)| k != "CODEX_HOME"));
+    }
 }
 #[test]
 fn custom_api_proxy_is_per_profile_and_replaces_domain_blocking() {

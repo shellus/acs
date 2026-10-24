@@ -21,6 +21,7 @@
 - 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；存在显式限制时提示冲突。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。
 - acs 只管理 `model_providers.custom`；两种模式下均原样保留目标配置中的其他 provider，不将其写入配置库。`~/.acs/profiles.json` 的 `model_providers_toml` 只保存 custom 的完整 TOML 片段，保留其未知字段和嵌套表。官方模式将活动 custom 替换为名称、`wire_api = "responses"` 与 `requires_openai_auth = true` 的精简定义，供历史对话解析，不携带自定义地址、Key、认证覆盖或请求头；自定义模式恢复 custom 快照后更新表单字段。重复保存不得用官方模式的精简定义覆盖快照。
 - 数据格式变更只做一次性迁移，不在程序中保留旧版本兼容分支或升级测试。
+- Claude 桌面版的自定义 API 只通过 `Claude-3p` 的 `configLibrary` acs 条目与 `deploymentMode` 切换，不写 `disableDeploymentModeChooser` 或 `HKCU\SOFTWARE\Policies\Claude`；切回官方只移除 acs 条目及其连接字段，保留用户条目。
 - 桌面窗口几何写入 `~/.acs/window.json`，不进入目标文件基线，也不因记住尺寸触发外部变化校验；只在退出时落盘，失败仅记日志，不阻断退出或启动。记住的位置不在任何显示器上时放弃该位置。
 - 不静默删除 profile 或路由覆盖配置；发现与目标模式冲突时，在落盘前提示并阻止切换。
 - 历史修复只能由 GUI“修复对话”按钮或 CLI `repair` 命令显式触发。进度必须来自真实工作量，GUI 以临时 `n/total` 进度区展示。
@@ -30,7 +31,7 @@
 
 - 不得把真实 API Key、API 地址、账号、本机路径或 Codex 配置提交到仓库。
 - README 截图只能捕获应用窗口，并使用隔离 fixture 与明显的 `example` 占位值；不得包含桌面背景、终端、用户名或真实配置。`docs/images/*.png` 取自 `npm test` 输出的 `.impeccable/review/<默认窗口宽>-<模式>.png`，界面布局变更后必须同步替换，不保留与当前界面不符的图片。
-- Rust 测试显式传入临时 Store；正式 GUI 自动化必须设置 `ACS_HOME`、`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 并指向隔离 fixture，禁止测试读取真实用户目录。
+- Rust 测试显式传入临时 Store；正式 GUI 自动化必须设置 `ACS_HOME`、`CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`ACS_CLAUDE_DESKTOP_DIR` 并指向隔离 fixture，禁止测试读取真实用户目录。
 - 测试入口放在 Rust tests 或 `#[cfg(test)]` 中，不得进入正式 EXE，不得添加运行时测试后门。
 - 修改同步逻辑时至少验证：成功更新、无变更幂等、数据库失败回滚、备份存在，以及保存配置不会触发同步。
 

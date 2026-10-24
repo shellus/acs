@@ -43,6 +43,7 @@ async function fixture(page: Page) {
         codex: "/example/codex",
         claude: "/example/claude",
         claude_json: "/example/claude/.claude.json",
+        claude_desktop: "/example/claude-desktop",
       },
     };
     const win = window as unknown as Record<string, any>;

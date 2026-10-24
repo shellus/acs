@@ -30,7 +30,13 @@ pub const CODEX_ENV: usize = 3;
 pub const CLAUDE_SETTINGS: usize = 4;
 pub const CLAUDE_CREDENTIALS: usize = 5;
 pub const CLAUDE_ACCOUNT: usize = 6;
-pub const TARGETS: usize = 7;
+pub const DESKTOP_MODE: usize = 7;
+pub const DESKTOP_META: usize = 8;
+pub const DESKTOP_PROFILE: usize = 9;
+pub const TARGETS: usize = 10;
+
+/// acs 在 Claude 桌面版 `configLibrary` 里固定使用的条目 ID；桌面版只接受 UUID 形式。
+pub const DESKTOP_PROFILE_ID: &str = "00000000-0000-4000-8000-000000000ac5";
 
 const WINDOW_STATE: &str = "window.json";
 pub type Snapshot = Vec<Option<Vec<u8>>>;
@@ -43,6 +49,8 @@ pub struct Roots {
     pub codex: PathBuf,
     pub claude: PathBuf,
     pub claude_json: PathBuf,
+    /// Claude 桌面版第三方推理（3P）模式的数据目录，桌面版固定从这里读取 3P 配置。
+    pub claude_desktop: PathBuf,
 }
 impl Roots {
     pub fn discover() -> Result<Self> {
@@ -65,11 +73,22 @@ impl Roots {
             Some(dir) => dir.join(".claude.json"),
             None => home.context("无法确定用户主目录")?.join(".claude.json"),
         };
+        // 桌面版在 Windows 用 %LOCALAPPDATA%\Claude-3p，macOS 用 Application Support，
+        // Linux 用 XDG 配置目录；MSIX 安装也直接读写这个真实路径。
+        #[cfg(target_os = "linux")]
+        let desktop_parent = dirs::config_dir();
+        #[cfg(not(target_os = "linux"))]
+        let desktop_parent = dirs::data_local_dir();
+        let claude_desktop = std::env::var_os("ACS_CLAUDE_DESKTOP_DIR")
+            .map(PathBuf::from)
+            .or_else(|| desktop_parent.map(|p| p.join("Claude-3p")))
+            .context("无法确定 Claude 桌面版配置目录")?;
         Ok(Self {
             acs,
             codex,
             claude,
             claude_json,
+            claude_desktop,
         })
     }
     /// 测试与 GUI 自动化使用的隔离目录，禁止落到真实用户配置上。
@@ -79,6 +98,7 @@ impl Roots {
             codex: dir.join("codex"),
             claude: dir.join("claude"),
             claude_json: dir.join("claude.json"),
+            claude_desktop: dir.join("claude-desktop"),
         }
     }
 }
@@ -130,6 +150,25 @@ impl Store {
                 label: ".claude.json 的 oauthAccount",
                 path: r.claude_json.clone(),
                 lens: Lens::Field("oauthAccount"),
+            },
+            // 桌面版持续改写自己的偏好，只管理决定 1P/3P 的 deploymentMode。
+            Target {
+                label: "Claude 桌面版的 deploymentMode",
+                path: r.claude_desktop.join("claude_desktop_config.json"),
+                lens: Lens::Field("deploymentMode"),
+            },
+            Target {
+                label: "Claude 桌面版 configLibrary/_meta.json",
+                path: r.claude_desktop.join("configLibrary").join("_meta.json"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: "Claude 桌面版 acs 配置",
+                path: r
+                    .claude_desktop
+                    .join("configLibrary")
+                    .join(format!("{DESKTOP_PROFILE_ID}.json")),
+                lens: Lens::Whole,
             },
         ]
     }

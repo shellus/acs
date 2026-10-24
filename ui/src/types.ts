@@ -44,7 +44,7 @@ export interface Draft {
 export interface View {
   revision: string;
   draft: Draft;
-  roots: { acs: string; codex: string; claude: string; claude_json: string };
+  roots: { acs: string; codex: string; claude: string; claude_json: string; claude_desktop: string };
 }
 export interface Progress {
   phase: string;

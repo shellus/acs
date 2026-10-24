@@ -457,6 +457,11 @@ export default function App() {
                           <Field
                             label="模型"
                             value={fields.model}
+                            hint={
+                              agent === "claude"
+                                ? "桌面版只显示 claude-* 名称，其他名称由中转站 /v1/models 提供"
+                                : undefined
+                            }
                             disabled={!!busy}
                             onChange={(v) => field("model", v)}
                           />

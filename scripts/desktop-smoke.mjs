@@ -18,6 +18,7 @@ async function open() {
     ACS_HOME: join(fixture, 'acs'),
     CODEX_HOME: join(fixture, 'codex'),
     CLAUDE_CONFIG_DIR: join(fixture, 'claude'),
+    ACS_CLAUDE_DESKTOP_DIR: join(fixture, 'claude-desktop'),
     WEBVIEW2_USER_DATA_FOLDER: join(fixture, 'webview'),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
   } });
@@ -34,8 +35,8 @@ async function open() {
   const page = context.pages()[0] ?? await context.waitForEvent('page');
   await page.getByRole('tab', { name: '官方账号', exact: true }).waitFor();
   const view = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('load'));
-  for (const name of ['acs', 'codex', 'claude']) {
-    assert.equal(resolve(view.roots[name]), join(fixture, name), `Refusing writes outside isolated ${name} fixture`);
+  for (const name of ['acs', 'codex', 'claude', 'claude-desktop']) {
+    assert.equal(resolve(view.roots[name.replace('-', '_')]), join(fixture, name), `Refusing writes outside isolated ${name} fixture`);
   }
   assert.equal(resolve(view.roots.claude_json), join(fixture, 'claude', '.claude.json'));
   return page;
@@ -100,6 +101,9 @@ try {
   const claudeSettings = JSON.parse(await readFile(join(fixture, 'claude', 'settings.json'), 'utf8'));
   assert.equal(claudeSettings.env.ANTHROPIC_BASE_URL, 'https://claude.example.com');
   assert.equal(claudeSettings.env.ANTHROPIC_AUTH_TOKEN, 'example-claude-key');
+  const desktopProfile = JSON.parse(await readFile(join(fixture, 'claude-desktop', 'configLibrary', '00000000-0000-4000-8000-000000000ac5.json'), 'utf8'));
+  assert.equal(desktopProfile.inferenceGatewayBaseUrl, 'https://claude.example.com');
+  assert.equal(JSON.parse(await readFile(join(fixture, 'claude-desktop', 'claude_desktop_config.json'), 'utf8')).deploymentMode, '3p');
   assert.equal(await readFile(join(fixture, 'codex', 'config.toml'), 'utf8'), codexConfig);
   assert.equal(await readFile(join(fixture, 'codex', 'auth.json'), 'utf8'), codexAuth);
   await page.getByRole('tab', {name:'Codex',exact:true}).click();

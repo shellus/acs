@@ -35,9 +35,6 @@ pub struct Plan {
 }
 impl Settings {
     pub fn plan(&self, executable: PathBuf, desktop: bool, args: Vec<String>) -> Result<Plan> {
-        if desktop && self.agent == Agent::Claude {
-            bail!("Claude 没有桌面客户端，请直接启动 CLI")
-        }
         let mut plan = Plan {
             executable,
             args,
@@ -57,9 +54,9 @@ impl Settings {
         }
         let proxy = normalize_proxy(&self.proxy)?;
         if proxy.is_empty() {
-            // 直连时 OpenAI 云端域名会让 Electron 外壳长时间卡住，只能阻断；
-            // 走代理时这些域名可正常访问，不再阻断。
-            if desktop && self.mode == Mode::Custom {
+            // 直连时 OpenAI 云端域名会让 Codex 的 Electron 外壳长时间卡住，只能阻断；
+            // 走代理时这些域名可正常访问，不再阻断。Claude 桌面版在 3P 模式下不访问 claude.ai。
+            if desktop && self.agent == Agent::Codex && self.mode == Mode::Custom {
                 plan.args
                     .push(format!("--host-resolver-rules={RESOLVER_RULES}"));
             }
@@ -114,29 +111,43 @@ impl Plan {
 }
 
 pub fn desktop_executable(agent: Agent) -> Result<PathBuf> {
-    if agent == Agent::Claude {
-        bail!("Claude 没有桌面客户端，请直接启动 CLI")
-    }
     #[cfg(windows)]
     {
-        if let Some(package) = windows::installed_packages()?.into_iter().next() {
+        let packages = windows::installed_packages(agent).unwrap_or_default();
+        if let Some(package) = packages.into_iter().next() {
             return Ok(package.executable);
+        }
+        // 旧版 Claude 桌面安装器（Squirrel）装在用户目录，不是 MSIX 包。
+        if agent == Agent::Claude {
+            if let Some(path) = dirs::data_local_dir()
+                .map(|dir| dir.join("AnthropicClaude").join("claude.exe"))
+                .filter(|path| path.is_file())
+            {
+                return Ok(path);
+            }
         }
     }
     #[cfg(target_os = "macos")]
     {
+        let bundle = match agent {
+            Agent::Codex => "Codex.app/Contents/MacOS/Codex",
+            Agent::Claude => "Claude.app/Contents/MacOS/Claude",
+        };
         let mut roots = vec![PathBuf::from("/Applications")];
         if let Some(home) = dirs::home_dir() {
             roots.push(home.join("Applications"));
         }
         for root in roots {
-            let path = root.join("Codex.app/Contents/MacOS/Codex");
+            let path = root.join(bundle);
             if path.is_file() {
                 return Ok(path);
             }
         }
     }
-    bail!("未找到 Codex 桌面客户端；请安装客户端，或在 CLI 使用 --exe 指定路径")
+    bail!(
+        "未找到 {} 桌面客户端；请点击“安装客户端”，或在 CLI 使用 --exe 指定路径",
+        agent.label()
+    )
 }
 pub fn launch_desktop(settings: Settings) -> Result<()> {
     let executable = desktop_executable(settings.agent)?;
@@ -165,7 +176,19 @@ pub fn cli_executable(agent: Agent) -> PathBuf {
 }
 pub fn open_download(agent: Agent, updates: bool) -> Result<()> {
     if agent == Agent::Claude {
-        open::that("https://docs.claude.com/en/docs/claude-code/setup")?;
+        // 桌面版自带更新；下载地址按平台跳转到最新安装包，需要浏览器请求。
+        let url = if updates {
+            "https://claude.com/download"
+        } else if cfg!(target_os = "macos") {
+            "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
+        } else if cfg!(all(windows, target_arch = "aarch64")) {
+            "https://claude.ai/api/desktop/win32/arm64/setup/latest/redirect"
+        } else if cfg!(windows) {
+            "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect"
+        } else {
+            "https://code.claude.com/docs/en/setup"
+        };
+        open::that(url)?;
         return Ok(());
     }
     #[cfg(windows)]

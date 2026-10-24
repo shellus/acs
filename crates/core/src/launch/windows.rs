@@ -1,4 +1,5 @@
 use super::Plan;
+use crate::Agent;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,18 +23,27 @@ pub(super) struct Package {
     version: Vec<u32>,
 }
 
-pub(super) fn installed_packages() -> Result<Vec<Package>> {
+/// 已安装的 MSIX 包名与包内可执行文件。
+fn package_layout(agent: Agent) -> (&'static [&'static str], &'static str) {
+    match agent {
+        Agent::Codex => (&["OpenAI.Codex"], "ChatGPT.exe"),
+        Agent::Claude => (&["Claude", "AnthropicPBC.Claude"], "Claude.exe"),
+    }
+}
+
+pub(super) fn installed_packages(agent: Agent) -> Result<Vec<Package>> {
+    let (names, program) = package_layout(agent);
     let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages")
         .context("未找到客户端安装信息，请打开应用商店安装")?;
     let mut packages = Vec::new();
     for name in key.enum_keys() {
         let name = name?;
         let parts: Vec<_> = name.split('_').collect();
-        if parts.len() != 5 || parts[0] != "OpenAI.Codex" {
+        if parts.len() != 5 || !names.contains(&parts[0]) {
             continue;
         }
         let root: String = key.open_subkey(&name)?.get_value("PackageRootFolder")?;
-        let executable = PathBuf::from(root).join("app").join("ChatGPT.exe");
+        let executable = PathBuf::from(root).join("app").join(program);
         if executable.is_file() {
             packages.push(Package {
                 executable,
@@ -53,7 +63,11 @@ pub(super) fn package_for(executable: &Path) -> Result<Option<Package>> {
     let Ok(executable) = executable.canonicalize() else {
         return Ok(None);
     };
-    Ok(installed_packages()?.into_iter().find(|package| {
+    let mut packages = Vec::new();
+    for agent in Agent::ALL {
+        packages.extend(installed_packages(agent)?);
+    }
+    Ok(packages.into_iter().find(|package| {
         package.executable.canonicalize().is_ok_and(|path| {
             path.as_os_str()
                 .to_string_lossy()
@@ -194,7 +208,7 @@ pub(super) fn spawn_packaged(plan: &Plan, package: &Package) -> Result<()> {
                 let outcome: Outcome = serde_json::from_slice(&fs::read(&result_path)?)?;
                 break match (outcome.pid, outcome.error) {
                     (Some(pid), None) if pid != 0 => Ok(()),
-                    (_, Some(error)) => Err(anyhow::anyhow!("无法启动 Codex 商店包：{error}")),
+                    (_, Some(error)) => Err(anyhow::anyhow!("无法启动商店包客户端：{error}")),
                     _ => Err(anyhow::anyhow!("Windows 包启动返回了无效结果")),
                 };
             }
@@ -213,7 +227,7 @@ pub(super) fn spawn_packaged(plan: &Plan, package: &Package) -> Result<()> {
             }
             if Instant::now() >= deadline {
                 break Err(anyhow::anyhow!(
-                    "等待 Codex 商店包启动确认超时；请检查客户端是否已打开"
+                    "等待商店包客户端启动确认超时；请检查客户端是否已打开"
                 ));
             }
             thread::sleep(Duration::from_millis(50));
@@ -415,7 +429,7 @@ $value = @{{ home = $env:CODEX_HOME; proxy = $env:HTTPS_PROXY; key = $env:OPENAI
     #[test]
     #[ignore = "requires an installed Codex MSIX; runs only isolated PowerShell probes"]
     fn installed_package_preserves_launch_environment() {
-        let package = installed_packages()
+        let package = installed_packages(Agent::Codex)
             .unwrap()
             .into_iter()
             .next()
@@ -431,6 +445,6 @@ $value = @{{ home = $env:CODEX_HOME; proxy = $env:HTTPS_PROXY; key = $env:OPENAI
         assert!(spawn_packaged(&plan, &package)
             .unwrap_err()
             .to_string()
-            .contains("无法启动 Codex 商店包"));
+            .contains("无法启动商店包客户端"));
     }
 }

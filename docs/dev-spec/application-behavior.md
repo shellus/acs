@@ -19,6 +19,7 @@
 | `codex` | `CODEX_HOME`，默认 `~/.codex` | `config.toml`、`auth.json`、`.env` 托管区块 |
 | `claude` | `CLAUDE_CONFIG_DIR`，默认 `~/.claude` | `settings.json`、`.credentials.json` |
 | `claude_json` | 随 `CLAUDE_CONFIG_DIR`，默认 `~/.claude.json` | 只管理 `oauthAccount` 字段 |
+| `claude_desktop` | `ACS_CLAUDE_DESKTOP_DIR`，默认桌面版 `Claude-3p` 数据目录 | `claude_desktop_config.json` 的 `deploymentMode`、`configLibrary/_meta.json` 与 acs 条目 |
 
 `Roots::under(dir)` 是测试与 GUI 自动化的隔离入口，禁止落到真实用户目录。
 
@@ -53,6 +54,8 @@ Codex 认证由 `auth.json` 决定。不写 forced_login_method；显式限制�
 
 Claude 认证由 `settings.json` 的 `ANTHROPIC_*` 与 `.credentials.json` 共同决定。API 模式写入 `ANTHROPIC_AUTH_TOKEN` 与 `ANTHROPIC_BASE_URL`，以及该配置的代理变量；切回官方账号时移除这两个键，`.credentials.json` 原样保留，因此退出登录后不会恢复旧令牌。空字符串视为未登录。
 
+Claude 桌面版忽略 `settings.json` 的 `ANTHROPIC_BASE_URL`，同一次保存同步它的 3P 配置。acs 条目使用固定 UUID `00000000-0000-4000-8000-000000000ac5`，只管理 `inferenceProvider`、`inferenceGatewayBaseUrl`、`inferenceGatewayApiKey`、`inferenceGatewayAuthScheme`（`bearer`）和 `inferenceModels`，其他键原样保留；内容未变时保留原字节。不写 `disableDeploymentModeChooser`：桌面版把它当作 `disableClaudeAiSignIn`，会强制 3P 并忽略 `deploymentMode`。`claude_desktop_config.json` 由桌面版持续写入，只把 `deploymentMode` 纳入基线。启动校验要求自定义模式下 `deploymentMode` 为 `3p`、`appliedId` 指向 acs 条目且地址和 Key 与 `settings.json` 一致，官方模式下为 `1p` 或桌面版从未进入 3P；不一致时提示重新保存。桌面启动不加 OpenAI 域名阻断，生效代理以 `--proxy-server` 与代理环境变量注入。
+
 配置 ID 是 8 位随机小写十六进制字符串，在全部客户端和模式间全局唯一；读取配置库和保存草稿时由核心统一校验，重复或格式错误时阻止操作，不自动重编号。历史 ID、配置 ID 和显示名称独立，显示名称允许重复。
 
 外部 API 只按地址和 Key 刷新已有条目；无法匹配时不创建配置。官方凭据只刷新已知账号，或绑定已选中的未登录配置，保留既有 ID；未知账号不自动添加。新增配置由 GUI“添加”或 CLI `add` 显式完成。
@@ -71,7 +74,7 @@ Claude 认证由 `settings.json` 的 `ANTHROPIC_*` 与 `.credentials.json` 共�
 
 ## 验证范围
 
-- 核心：8 位 ID 与跨客户端/模式唯一性、保存/启动分离、目标文件外部变化、写入失败逐点回滚、快照往返、已有账号登录捕获与退出、未知账号不自动创建、部分凭据阻止、外部 API 归属、代理校验/幂等/父环境隔离、自定义 API 按配置代理与域名阻断取舍、路由冲突、备份/WAL、幂等、多数据库与文件失败回滚。
+- 核心：Claude 桌面版 3P/1P 同步、用户条目保留、幂等与外部切换阻止启动、8 位 ID 与跨客户端/模式唯一性、保存/启动分离、目标文件外部变化、写入失败逐点回滚、快照往返、已有账号登录捕获与退出、未知账号不自动创建、部分凭据阻止、外部 API 归属、代理校验/幂等/父环境隔离、自定义 API 按配置代理与域名阻断取舍、路由冲突、备份/WAL、幂等、多数据库与文件失败回滚。
 - CLI：实际二进制两个客户端的增改删、ID 前缀定位、歧义与未知目标报错、代理读写隔离、修复确认。
 - Web 界面：两份草稿独立、失败与重试、三个关闭入口、修复确认、浅深色、默认与最小窗口和大文本。
 - Windows 正式 GUI：fixture、实际 IPC、保存与外部冲突、取消关闭和 Esc、退出记住窗口几何与再次打开按记住尺寸还原；脚本不进入正式二进制。
@@ -88,8 +91,8 @@ Windows 常规测试验证参数转义、环境传递、父环境不变和目标
 
 ## 仍需关注的边界
 
-- Claude 没有桌面客户端，GUI 的“启动”对 Claude 走 `launch_desktop` 会直接报“Claude 没有桌面客户端，请直接启动 CLI”。要么让 GUI 对 Claude 启动 CLI，要么在 Claude 选中时明确禁用启动按钮，需要产品决策。
-- 打开 GUI 的“安装客户端”和“检查更新”对 Claude 都跳转到 Claude Code 安装文档，没有区分两个动作。
+- Claude 桌面版的 `deploymentMode` 与 `configLibrary` 格式未公开，依据桌面版 3.6556 的实际读取逻辑；升级后需复核。桌面版在 3P 登录页切回 Anthropic 登录会改写 `deploymentMode`，此后启动校验要求重新保存。
+- Claude 桌面版的官方账号登录保存在桌面版自身，acs 的多官方账号切换只作用于 Claude Code。
 - 外部 Codex 不参与操作锁；基线核对与替换间仍有竞争窗口，多文件保存也不是掉电原子事务。
 - SQLite ATTACH 在 WAL、崩溃或掉电条件下不保证跨库提交原子性；备份提供恢复依据。修复应停止客户端写入后执行。
 - rollout 扫描流式处理，但替换/冲突核对阶段仍读取完整文件；极大文件峰值内存待评估。

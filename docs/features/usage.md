@@ -2,7 +2,7 @@
 
 ## 配置目录
 
-本程序自己的目录由 `ACS_HOME` 决定，默认 `~/.acs`；被管理的客户端目录由 `CODEX_HOME`（默认 `~/.codex`）、`CLAUDE_CONFIG_DIR`（默认 `~/.claude` 与 `~/.claude.json`）决定。CLI 的 `--root` 把三者一起放到指定目录下，用于隔离测试。
+本程序自己的目录由 `ACS_HOME` 决定，默认 `~/.acs`；被管理的客户端目录由 `CODEX_HOME`（默认 `~/.codex`）、`CLAUDE_CONFIG_DIR`（默认 `~/.claude` 与 `~/.claude.json`）、`ACS_CLAUDE_DESKTOP_DIR`（默认为 Claude 桌面版的 `Claude-3p` 数据目录：Windows `%LOCALAPPDATA%\Claude-3p`，macOS `~/Library/Application Support/Claude-3p`，Linux `~/.config/Claude-3p`）决定。CLI 的 `--root` 把全部目录一起放到指定目录下，用于隔离测试。
 
 | 文件 | 归属 | 用途 |
 | --- | --- | --- |
@@ -16,6 +16,9 @@
 | `~/.claude/settings.json` | Claude | 自定义 API 的 `ANTHROPIC_*` 环境变量 |
 | `~/.claude/.credentials.json` | Claude | 官方登录凭据 |
 | `~/.claude.json` 的 `oauthAccount` | Claude | 官方账号身份；其余字段不参与基线 |
+| `Claude-3p/claude_desktop_config.json` 的 `deploymentMode` | Claude 桌面版 | `3p` 使用自定义 API，`1p` 使用官方账号；其余字段不参与基线 |
+| `Claude-3p/configLibrary/_meta.json` | Claude 桌面版 | 3P 配置条目列表与 `appliedId` |
+| `Claude-3p/configLibrary/00000000-0000-4000-8000-000000000ac5.json` | Claude 桌面版 | acs 管理的网关地址、Key 与模型 |
 
 配置和备份包含私人凭据，不进入源码仓库。
 
@@ -30,6 +33,8 @@ API 地址使用 `https://主机/路径/v1`（Claude 填 `https://主机` 即可
 Codex 的登录、刷新和联网验证由 Codex 完成，Claude 由 Claude Code 完成。新增账号不携带其他账号旧令牌；客户端明确退出登录后，不再恢复该账号旧凭据。部分损坏的令牌阻止读取，避免误判为退出登录。
 
 官方账号的 HTTP 代理按客户端设置，同一客户端的官方账号共用；自定义 API 的代理按配置单独设置，部署在海外的中转站等需要代理时填写，留空直连。生效的代理只影响新启动客户端、子进程和读取同一配置的 CLI，不修改系统代理或父终端环境。Codex 的代理写在 `.env` 的托管区块，Claude 的代理写在 `settings.json` 的 `ANTHROPIC_*` 同级环境变量。当前模式的代理为空时，仅移除管理的键，原有内容保留；原有代理变量仍可能生效。
+
+Claude 桌面版不读取 `settings.json` 的 `ANTHROPIC_*`，自定义 API 通过它的第三方推理（3P）配置生效：保存时写入 acs 自己的 `configLibrary` 条目，设为 `appliedId`，并把 `deploymentMode` 设为 `3p`。切回官方账号时 `deploymentMode` 改为 `1p`，移除 acs 条目及其连接字段，保留用户在桌面版里添加的条目和其他键；从未使用过 3P 时不创建桌面版文件。桌面版只接受 `claude-*` 形式的模型名，其他模型名不写入，由中转站的 `/v1/models` 提供模型列表。官方模式由桌面版自己登录 claude.ai，与 `.credentials.json` 无关，所在地区受限时需要设置官方代理。桌面版只在启动时读取配置，已在运行时需完全退出后再点“启动”。
 
 Codex 桌面版在自定义 API 模式直连时阻断 Electron 外壳的 OpenAI 云端域名，避免请求长时间卡住；该配置设置了代理时改为通过代理访问，不再阻断。
 
@@ -111,4 +116,4 @@ acs repair --yes
 
 Windows 便携 ZIP 只包含 `acs-gui.exe`，需要 WebView2；NSIS 安装包可处理缺失运行时。CLI 为独立的 `acs.exe`。macOS 使用 `.app` 压缩包，未配置 Apple 发布证书时未经 Developer ID 签名和公证，构建成功不代表无提示分发。
 
-Windows 自动发现当前用户最高版本 `OpenAI.Codex` 包，Claude 查找 `AnthropicClaude` 包。macOS 查找 `/Applications/Codex.app` 和用户 Applications 目录。客户端缺失或启动失败时留在设置页；安装入口在 Windows 打开 Microsoft Store，其他平台打开对应客户端下载页。macOS“检查更新”是下载入口，不声称执行了更新检查。
+Windows 自动发现当前用户最高版本 `OpenAI.Codex` 包；Claude 查找 `Claude` MSIX 包，其次是旧安装器的 `%LOCALAPPDATA%\AnthropicClaude\claude.exe`。macOS 在 `/Applications` 和用户 Applications 目录查找 `Codex.app` 或 `Claude.app`。客户端缺失或启动失败时留在设置页；Codex 的安装入口在 Windows 打开 Microsoft Store，Claude 打开对应平台的官方安装包下载地址，“检查更新”打开 claude.com/download。macOS“检查更新”是下载入口，不声称执行了更新检查。
