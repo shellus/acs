@@ -34,7 +34,7 @@ Codex 的登录、刷新和联网验证由 Codex 完成，Claude 由 Claude Code
 
 官方账号的 HTTP 代理按客户端设置，同一客户端的官方账号共用；自定义 API 的代理按配置单独设置，部署在海外的中转站等需要代理时填写，留空直连。生效的代理只影响新启动客户端、子进程和读取同一配置的 CLI，不修改系统代理或父终端环境。Codex 的代理写在 `.env` 的托管区块，Claude 的代理写在 `settings.json` 的 `ANTHROPIC_*` 同级环境变量。当前模式的代理为空时，仅移除管理的键，原有内容保留；原有代理变量仍可能生效。
 
-Claude 桌面版不读取 `settings.json` 的 `ANTHROPIC_*`，自定义 API 通过它的第三方推理（3P）配置生效：保存时写入 acs 自己的 `configLibrary` 条目，设为 `appliedId`，并把 `deploymentMode` 设为 `3p`。切回官方账号时 `deploymentMode` 改为 `1p`，移除 acs 条目及其连接字段，保留用户在桌面版里添加的条目和其他键；从未使用过 3P 时不创建桌面版文件。桌面版只接受 `claude-*` 形式的模型名，其他模型名不写入，由中转站的 `/v1/models` 提供模型列表。官方模式由桌面版自己登录 claude.ai，与 `.credentials.json` 无关，所在地区受限时需要设置官方代理。桌面版只在启动时读取配置，已在运行时需完全退出后再点“启动”。
+Claude 桌面版不读取 `settings.json` 的 `ANTHROPIC_*`，自定义 API 通过它的第三方推理（3P）配置生效：保存时写入 acs 自己的 `configLibrary` 条目，设为 `appliedId`，并把 `deploymentMode` 设为 `3p`。切回官方账号时 `deploymentMode` 改为 `1p`，移除 acs 条目及其连接字段，保留用户在桌面版里添加的条目和其他键；从未使用过 3P 时不创建桌面版文件。桌面版只接受 `claude-*` 形式的模型名：配置了这类模型名时只向桌面版提供该模型；留空时由中转站的 `/v1/models` 提供列表（桌面版会滤掉非 Claude 名称）；填了其他模型名（如 gemini）时启动桌面版报错并阻止启动，Claude Code CLI 不受影响。官方模式由桌面版自己登录 claude.ai，与 `.credentials.json` 无关，所在地区受限时需要设置官方代理。桌面版只在启动时读取配置，已在运行时需完全退出后再点“启动”。
 
 Codex 桌面版在自定义 API 模式直连时阻断 Electron 外壳的 OpenAI 云端域名，避免请求长时间卡住；该配置设置了代理时改为通过代理访问，不再阻断。
 

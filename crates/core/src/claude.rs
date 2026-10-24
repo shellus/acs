@@ -319,7 +319,7 @@ fn rewrite(original: &Option<Vec<u8>>, value: &Value, remove: bool) -> Result<Op
     Ok(Some(bytes))
 }
 /// 与桌面版的模型名校验一致：可带 `anthropic/` 前缀，`claude-` 加角色名再加版本。
-fn desktop_model(model: &str) -> bool {
+pub(crate) fn desktop_model(model: &str) -> bool {
     let model = model.trim().to_ascii_lowercase();
     let model = model.strip_prefix("anthropic/").unwrap_or(&model);
     let Some(rest) = model.strip_prefix("claude-") else {

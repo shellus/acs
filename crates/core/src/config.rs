@@ -453,11 +453,17 @@ impl Session {
             Agent::Codex => codex::launch_check(&self.baseline)?,
             Agent::Claude => claude::launch_check(&self.baseline)?,
         };
+        let library = &self.original.agent(agent).library;
         Ok(crate::launch::Settings {
             agent,
             mode,
-            proxy: normalize_proxy(self.original.agent(agent).library.proxy(mode))?,
+            proxy: normalize_proxy(library.proxy(mode))?,
             roots: self.store.roots.clone(),
+            model: match mode {
+                Mode::Official => library.official_model.clone(),
+                Mode::Custom => library.selected(mode).and_then(|p| p.custom_model.clone()),
+            }
+            .unwrap_or_default(),
         })
     }
 }

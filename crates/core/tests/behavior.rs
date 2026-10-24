@@ -667,6 +667,7 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
         mode: Mode::Official,
         proxy: "http://127.0.0.1:7890".into(),
         roots: Roots::under(Path::new("example")),
+        model: String::new(),
     };
     let plan = settings.plan("example".into(), true, vec![]).unwrap();
     let _command = plan.command();
@@ -682,6 +683,7 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
             mode: Mode::Custom,
             proxy: proxy.into(),
             roots: Roots::under(Path::new("example")),
+            model: String::new(),
         };
         let plan = claude.plan("example".into(), true, vec![]).unwrap();
         assert!(plan
@@ -691,6 +693,25 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
         assert_eq!(plan.args.is_empty(), proxy.is_empty());
         assert!(plan.remove_env.contains(&"ANTHROPIC_AUTH_TOKEN".into()));
         assert!(plan.env.iter().all(|(k, _)| k != "CODEX_HOME"));
+    }
+    // 非 Claude 名称的模型只阻止桌面版启动，Claude Code CLI 照常可用；空模型交给模型发现。
+    for (model, desktop_ok) in [
+        ("gemini-3.8-flash", false),
+        ("claude-sonnet-5", true),
+        ("", true),
+    ] {
+        let claude = acs_core::launch::Settings {
+            agent: Agent::Claude,
+            mode: Mode::Custom,
+            proxy: String::new(),
+            roots: Roots::under(Path::new("example")),
+            model: model.into(),
+        };
+        assert_eq!(
+            claude.plan("example".into(), true, vec![]).is_ok(),
+            desktop_ok
+        );
+        assert!(claude.plan("example".into(), false, vec![]).is_ok());
     }
 }
 #[test]

@@ -25,6 +25,8 @@ pub struct Settings {
     pub mode: Mode,
     pub proxy: String,
     pub roots: Roots,
+    /// 当前模式保存的模型名；Claude 桌面版据此判断能否启动。
+    pub model: String,
 }
 #[derive(Debug, Serialize)]
 pub struct Plan {
@@ -35,6 +37,19 @@ pub struct Plan {
 }
 impl Settings {
     pub fn plan(&self, executable: PathBuf, desktop: bool, args: Vec<String>) -> Result<Plan> {
+        // 桌面版拒收非 Claude 名称的模型，会改用中转站列表里的其他模型；
+        // 宁可不启动，也不让请求落到用户没选的模型上。Claude Code CLI 不受此限制。
+        if desktop
+            && self.agent == Agent::Claude
+            && self.mode == Mode::Custom
+            && !self.model.trim().is_empty()
+            && !crate::claude::desktop_model(&self.model)
+        {
+            bail!(
+                "模型 {} 不是 claude-* 名称，Claude 桌面版不接受；请改用 claude-* 模型或留空，或使用 Claude Code CLI",
+                self.model.trim()
+            )
+        }
         let mut plan = Plan {
             executable,
             args,

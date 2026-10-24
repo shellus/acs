@@ -459,7 +459,7 @@ export default function App() {
                             value={fields.model}
                             hint={
                               agent === "claude"
-                                ? "桌面版只显示 claude-* 名称，其他名称由中转站 /v1/models 提供"
+                                ? "桌面版只接受 claude-* 模型名，其他名称只能用于 Claude Code CLI；留空则用中转站提供的模型列表"
                                 : undefined
                             }
                             disabled={!!busy}

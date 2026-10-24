@@ -318,6 +318,7 @@ $value = @{{ home = $env:CODEX_HOME; proxy = $env:HTTPS_PROXY; key = $env:OPENAI
                 String::new()
             },
             roots: Roots::under(directory),
+            model: String::new(),
         };
         // The probe is a console program, so desktop Chromium flags are verified
         // separately rather than passed to PowerShell's option parser.

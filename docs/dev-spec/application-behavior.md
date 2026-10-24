@@ -54,7 +54,7 @@ Codex 认证由 `auth.json` 决定。不写 forced_login_method；显式限制�
 
 Claude 认证由 `settings.json` 的 `ANTHROPIC_*` 与 `.credentials.json` 共同决定。API 模式写入 `ANTHROPIC_AUTH_TOKEN` 与 `ANTHROPIC_BASE_URL`，以及该配置的代理变量；切回官方账号时移除这两个键，`.credentials.json` 原样保留，因此退出登录后不会恢复旧令牌。空字符串视为未登录。
 
-Claude 桌面版忽略 `settings.json` 的 `ANTHROPIC_BASE_URL`，同一次保存同步它的 3P 配置。acs 条目使用固定 UUID `00000000-0000-4000-8000-000000000ac5`，只管理 `inferenceProvider`、`inferenceGatewayBaseUrl`、`inferenceGatewayApiKey`、`inferenceGatewayAuthScheme`（`bearer`）和 `inferenceModels`，其他键原样保留；内容未变时保留原字节。不写 `disableDeploymentModeChooser`：桌面版把它当作 `disableClaudeAiSignIn`，会强制 3P 并忽略 `deploymentMode`。`claude_desktop_config.json` 由桌面版持续写入，只把 `deploymentMode` 纳入基线。启动校验要求自定义模式下 `deploymentMode` 为 `3p`、`appliedId` 指向 acs 条目且地址和 Key 与 `settings.json` 一致，官方模式下为 `1p` 或桌面版从未进入 3P；不一致时提示重新保存。桌面启动不加 OpenAI 域名阻断，生效代理以 `--proxy-server` 与代理环境变量注入。
+Claude 桌面版忽略 `settings.json` 的 `ANTHROPIC_BASE_URL`，同一次保存同步它的 3P 配置。acs 条目使用固定 UUID `00000000-0000-4000-8000-000000000ac5`，只管理 `inferenceProvider`、`inferenceGatewayBaseUrl`、`inferenceGatewayApiKey`、`inferenceGatewayAuthScheme`（`bearer`）和 `inferenceModels`，其他键原样保留；内容未变时保留原字节。不写 `disableDeploymentModeChooser`：桌面版把它当作 `disableClaudeAiSignIn`，会强制 3P 并忽略 `deploymentMode`。`claude_desktop_config.json` 由桌面版持续写入，只把 `deploymentMode` 纳入基线。启动校验要求自定义模式下 `deploymentMode` 为 `3p`、`appliedId` 指向 acs 条目且地址和 Key 与 `settings.json` 一致，官方模式下为 `1p` 或桌面版从未进入 3P；不一致时提示重新保存。自定义模式保存的模型名不是 `claude-*` 形式时，桌面启动计划直接报错，避免桌面版改用中转站列表里的其他模型；CLI 启动不做此限制。桌面启动不加 OpenAI 域名阻断，生效代理以 `--proxy-server` 与代理环境变量注入。
 
 配置 ID 是 8 位随机小写十六进制字符串，在全部客户端和模式间全局唯一；读取配置库和保存草稿时由核心统一校验，重复或格式错误时阻止操作，不自动重编号。历史 ID、配置 ID 和显示名称独立，显示名称允许重复。
 
