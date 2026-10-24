@@ -1,7 +1,7 @@
 // Preserve the settings-first desktop workflow: client switch, mode tabs, profile fields,
 // tab-local save, and a separate bottom launch action. Temporary edits never leave this
 // window's memory, and both clients are edited from one draft.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   AlertDialog,
   Button,
@@ -642,6 +642,8 @@ function Field({
   hint?: string;
   wide?: boolean;
 }) {
+  // 提示只作描述，不并入输入框的可访问名称。
+  const hintId = useId();
   return (
     <label className={`field${wide ? " wide" : ""}${hint ? " with-hint" : ""}`}>
       <span>{label}</span>
@@ -652,8 +654,14 @@ function Field({
         placeholder={placeholder}
         autoComplete="off"
         spellCheck={false}
+        aria-label={label}
+        aria-describedby={hint ? hintId : undefined}
       />
-      {hint && <span className="hint">{hint}</span>}
+      {hint && (
+        <span className="hint" id={hintId}>
+          {hint}
+        </span>
+      )}
     </label>
   );
 }
