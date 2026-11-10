@@ -50,7 +50,7 @@ GUI 保存请求显式携带当前客户端；校验和应用当前客户端，�
 
 `toml_edit` 只替换 `model_providers.custom`，两种模式下都保留目标配置中其他 provider 及其注释、字段和嵌套表。API 条目的 `model_providers_toml` 只保存 custom 完整片段，保留其未知字段和嵌套表；其他 provider 属于用户，不进入快照。官方模式将活动 custom 精简为名称、协议与官方认证标记，重复保存不以精简定义覆盖快照；自定义模式恢复 custom 快照并更新表单字段。显示名称不是 ID；名称精确为 `OpenAI` 可能触发上游特殊行为，本工具不将它解释为模式选择。
 
-Codex 认证由 `auth.json` 决定。不写 forced_login_method；显式限制、非 file 存储、选中的 profile、冲突路由或 custom 认证覆盖阻止应用。官方启动不携带自定义 Key、地址或域名阻断；自定义 API 直连时桌面启动阻断 OpenAI 云端域名，配置了代理时改用 `--proxy-server` 与代理环境变量，不再阻断；允许无令牌进入登录，部分损坏令牌阻止操作。JWT 只用于身份提示。
+Codex 认证由 `auth.json` 决定。不写 forced_login_method；显式限制、非 file 存储、选中的 profile、冲突路由或 custom 认证覆盖阻止应用。官方启动不携带自定义 Key、地址或域名阻断；自定义 API 直连时桌面启动阻断 OpenAI 云端域名，配置了代理时改用 `--proxy-server` 与代理环境变量，不再阻断；选中的官方账号没有已保存凭据时删除 `auth.json`，由客户端显示登录页（仅含 `auth_mode` 的占位文件会被新版客户端当作令牌缺失，显示“无法加载你的账户”）；部分损坏令牌阻止操作。JWT 只用于身份提示。
 
 Claude 认证由 `settings.json` 的 `ANTHROPIC_*` 与 `.credentials.json` 共同决定。API 模式写入 `ANTHROPIC_AUTH_TOKEN` 与 `ANTHROPIC_BASE_URL`，以及该配置的代理变量；切回官方账号时移除这两个键，`.credentials.json` 原样保留，因此退出登录后不会恢复旧令牌。空字符串视为未登录。
 

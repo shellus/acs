@@ -298,7 +298,19 @@ fn auth_refresh_capture_and_logout_do_not_restore_old_tokens() {
         .official_auth
         .is_none());
     s.save(&s.view().revision, &s.original.clone()).unwrap();
-    assert!(!read(&store, "auth.json").contains("example-access"));
+    assert!(!store.roots.codex.join("auth.json").exists());
+}
+#[test]
+fn new_official_account_without_credentials_removes_auth_file() {
+    let (_dir, store) = fixture();
+    let mut s = Session::open(store.clone()).unwrap();
+    custom(&mut s);
+    assert!(read(&store, "auth.json").contains("example-key"));
+    official(&mut s);
+    assert!(!store.roots.codex.join("auth.json").exists());
+    let s = Session::open(store.clone()).unwrap();
+    let settings = s.launch_settings(&s.view().revision, &s.original).unwrap();
+    assert_eq!(settings.mode, Mode::Official);
 }
 #[test]
 fn partial_tokens_block_without_clearing_library() {

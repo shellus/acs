@@ -207,27 +207,27 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
     validate_conflicts(&doc, draft.mode)?;
     let target = draft.resolve()?;
     let library = &draft.library;
-    let mut next_auth;
+    let next_auth;
     ensure_custom(&mut doc)?;
     doc["model_providers"]["custom"] = Item::Table(Table::new());
     if draft.mode == Mode::Official {
-        next_auth = json(
-            &Some(
-                target
-                    .official_auth
-                    .clone()
-                    .unwrap_or("{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null}".into())
-                    .into_bytes(),
-            ),
-            "auth.json",
-        )?;
-        if next_auth["auth_mode"] != "chatgpt" {
-            bail!("官方凭据模式无效")
-        }
-        if !next_auth["tokens"].is_null() && !valid_tokens(&next_auth) {
-            bail!("官方凭据不完整，请核对 auth.json")
-        }
-        next_auth["OPENAI_API_KEY"] = Value::Null;
+        // 无凭据时删除 auth.json：只有 auth_mode 的占位文件会让客户端当作已登录但令牌缺失，
+        // 显示“无法加载你的账户”而不是登录页。
+        next_auth = target
+            .official_auth
+            .as_ref()
+            .map(|text| -> Result<Value> {
+                let mut auth = json(&Some(text.clone().into_bytes()), "auth.json")?;
+                if auth["auth_mode"] != "chatgpt" {
+                    bail!("官方凭据模式无效")
+                }
+                if !valid_tokens(&auth) {
+                    bail!("官方凭据不完整，请核对 auth.json")
+                }
+                auth["OPENAI_API_KEY"] = Value::Null;
+                Ok(auth)
+            })
+            .transpose()?;
         doc["model_provider"] = value("openai");
         for (k, v) in [
             ("model", &library.official_model),
@@ -257,11 +257,13 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
         doc["model_provider"] = value("custom");
         doc["model"] = value(&f.model);
         doc["model_reasoning_effort"] = value(&f.effort);
-        next_auth = jsonv!({"auth_mode":"apikey","OPENAI_API_KEY":f.api_key});
+        next_auth = Some(jsonv!({"auth_mode":"apikey","OPENAI_API_KEY":f.api_key}));
     }
     let env = proxy_env(text(&baseline[CODEX_ENV])?, library.proxy(draft.mode))?;
     after[CODEX_CONFIG] = Some(doc.to_string().into_bytes());
-    after[CODEX_AUTH] = Some(serde_json::to_vec_pretty(&next_auth)?);
+    after[CODEX_AUTH] = next_auth
+        .map(|auth| serde_json::to_vec_pretty(&auth))
+        .transpose()?;
     after[CODEX_ENV] = if baseline[CODEX_ENV].is_none() && env.is_empty() {
         None
     } else {
