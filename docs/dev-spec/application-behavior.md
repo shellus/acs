@@ -101,6 +101,8 @@ Windows 常规测试验证参数转义、环境传递、父环境不变和目标
 ## 仍需关注的边界
 
 - `run` / `proxy` 未给 `--agent` 时仍默认 Codex；后续评估是否要求显式客户端，本次保持脚本兼容。
+- Claude CLI 的启动计划尚未显式注入 `CLAUDE_CONFIG_DIR`；`--root` 隔离配置读写时，实际启动 Claude 仍需调用方设置该变量。后续补齐启动环境及回归验证。
+- 使用文档“从 2.x 升级”仍描述自动读取旧配置库，与当前一次性迁移约束及核心实现不一致，待统一升级指引。
 
 - Claude 桌面版的 `deploymentMode` 与 `configLibrary` 格式未公开，依据桌面版 3.6556 的实际读取逻辑；升级后需复核。桌面版在 3P 登录页切回 Anthropic 登录会改写 `deploymentMode`，此后启动校验要求重新保存。
 - Claude 桌面版的官方账号登录保存在桌面版自身，acs 的多官方账号切换只作用于 Claude Code。
