@@ -185,7 +185,15 @@ fn capture_official(library: &mut Library, doc: &DocumentMut, credentials: &Valu
     let index = library
         .official_accounts
         .iter()
-        .position(|p| p.account_id.as_deref() == Some(account_id))
+        .position(|p| {
+            p.id == library.selected_official && p.account_id.as_deref() == Some(account_id)
+        })
+        .or_else(|| {
+            library
+                .official_accounts
+                .iter()
+                .position(|p| p.account_id.as_deref() == Some(account_id))
+        })
         .or_else(|| {
             library
                 .official_accounts

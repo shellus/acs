@@ -114,6 +114,10 @@ impl Login {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(60));
+        #[cfg(test)]
+        {
+            builder = builder.no_proxy();
+        }
         if !proxy.is_empty() {
             builder = builder.proxy(reqwest::Proxy::all(&proxy).context("官方代理配置无效")?);
         }
@@ -243,7 +247,9 @@ mod tests {
         body: String,
         verify: impl FnOnce(&str) + Send + 'static,
     ) -> (String, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = TcpListener::bind("[::1]:0")
+            .or_else(|_| TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
         let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
         let handle = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
@@ -422,5 +428,38 @@ mod tests {
         handle.join().unwrap();
         let library = std::fs::read_to_string(store.roots.acs.join("profiles.json")).unwrap();
         assert!(!library.contains("example-access"));
+    }
+
+    #[test]
+    fn logging_into_same_account_keeps_the_explicit_target_selected_on_reopen() {
+        let (_dir, store, first) = fixture();
+        let mut ids = vec![first];
+        let mut session = Session::open(store.clone()).unwrap();
+        let mut draft = session.original.clone();
+        ids.push(
+            draft
+                .codex
+                .add(Mode::Official, "example second account", None)
+                .unwrap(),
+        );
+        session
+            .save_for(&session.view().revision, &draft, Agent::Codex)
+            .unwrap();
+        for id in ids {
+            let login = Login::begin(store.clone(), &id).unwrap();
+            let cb = callback(&login);
+            let (endpoint, handle) = server(200, valid_response(), |_| {});
+            login.complete_at(&cb, &endpoint).unwrap();
+            handle.join().unwrap();
+            assert_eq!(
+                Session::open(store.clone())
+                    .unwrap()
+                    .original
+                    .codex
+                    .library
+                    .selected_official,
+                id
+            );
+        }
     }
 }
