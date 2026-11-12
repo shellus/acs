@@ -382,6 +382,7 @@ impl CustomFields {
         }
     }
     pub fn apply(&self, agent: Agent, p: &mut Profile) -> Result<()> {
+        self.validate(agent)?;
         match agent {
             Agent::Codex => codex::apply_fields(self, p)?,
             Agent::Claude => claude::apply_fields(self, p),

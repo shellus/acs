@@ -324,7 +324,7 @@ fn invalid_edit_preserves_saved_files_and_copy_retains_source_fields() {
             "example API",
         ],
     );
-    let s = acs_core::Session::open(store).unwrap();
+    let s = acs_core::Session::open(store.clone()).unwrap();
     assert_eq!(s.original.codex.library.custom_providers.len(), 2);
     assert_eq!(
         s.original
@@ -336,4 +336,12 @@ fn invalid_edit_preserves_saved_files_and_copy_retains_source_fields() {
             .len(),
         1
     );
+    let before = store.snapshot().unwrap();
+    assert!(!acs(
+        dir.path(),
+        &["edit", "example API", "--url", "bad-unselected-url"]
+    )
+    .status
+    .success());
+    assert_eq!(store.snapshot().unwrap(), before);
 }

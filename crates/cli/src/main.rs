@@ -11,7 +11,7 @@ use std::{
 #[derive(Parser)]
 #[command(
     version,
-    about = "管理 Codex 与 Claude 的配置与登录；无参进入交互菜单，显式启动客户端"
+    about = "管理 Codex 与 Claude 的配置与登录；无参进入全屏 TUI，显式启动客户端"
 )]
 struct Cli {
     /// 把全部配置根目录放到该目录下，用于隔离测试

@@ -11,6 +11,14 @@ type Screen = Terminal<CrosstermBackend<io::Stdout>>;
 struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> Result<Self> {
+        static HOOK: std::sync::Once = std::sync::Once::new();
+        HOOK.call_once(|| {
+            let old = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                TerminalGuard::restore();
+                old(info);
+            }));
+        });
         enable_raw_mode()?;
         if let Err(e) = execute!(io::stdout(), EnterAlternateScreen, crossterm::cursor::Hide) {
             let _ = disable_raw_mode();
@@ -177,7 +185,7 @@ struct App {
 }
 impl App {
     fn new(store: Store, agent: Agent) -> Result<Self> {
-        Ok(Self {
+        let mut app = Self {
             session: Session::open(store)?,
             agent,
             index: 0,
@@ -189,7 +197,9 @@ impl App {
             detail_scroll: 0,
             message: "就绪 · 高亮仅查看，Enter 设为当前；s 显式启动".into(),
             error: false,
-        })
+        };
+        app.focus_current();
+        Ok(app)
     }
     fn rows(&self) -> Vec<(Mode, acs_core::config::Profile)> {
         let d = self.session.original.agent(self.agent);
@@ -216,6 +226,14 @@ impl App {
     }
     fn selected(&self) -> Option<(Mode, acs_core::config::Profile)> {
         self.rows().get(self.index).cloned()
+    }
+    fn focus_current(&mut self) {
+        let d = self.session.original.agent(self.agent);
+        self.index = self
+            .rows()
+            .iter()
+            .position(|(m, p)| d.mode == *m && d.library.selection(*m) == p.id)
+            .unwrap_or(0);
     }
     fn result(&mut self, r: Result<()>, success: &str) {
         match r {
@@ -452,6 +470,7 @@ impl App {
                 self.index = 0;
                 self.filter.clear();
                 self.detail_scroll = 0;
+                self.focus_current();
             }
             KeyCode::PageDown => self.detail_scroll = self.detail_scroll.saturating_add(5),
             KeyCode::PageUp => self.detail_scroll = self.detail_scroll.saturating_sub(5),
@@ -564,11 +583,6 @@ pub fn dispatch(store: Store, action: Action, selected: Option<AgentArg>) -> Res
     }
 }
 fn run_tui(store: Store, selected: Option<AgentArg>, initial: Option<Action>) -> Result<()> {
-    let old = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        TerminalGuard::restore();
-        old(info);
-    }));
     let mut app = App::new(
         store.clone(),
         selected.map(Into::into).unwrap_or(Agent::Codex),
@@ -719,7 +733,9 @@ mod tests {
             );
         }
         s.save(&s.view().revision, &d).unwrap();
-        (dir, App::new(store, Agent::Codex).unwrap())
+        let mut app = App::new(store, Agent::Codex).unwrap();
+        app.index = 0;
+        (dir, app)
     }
     fn key(app: &mut App, c: KeyCode) -> Effect {
         app.key(KeyEvent::new(c, KeyModifiers::NONE))
