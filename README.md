@@ -22,7 +22,7 @@ Codex 与 Claude 各自独立生效：可以 Codex 停在官方账号，同时 C
 2. 填写并点击当前页的“保存配置”。保存不会启动或停止客户端。
 3. 点击底部“启动”。未保存修改或外部配置变化会阻止启动，并保留草稿。
 
-官方账号通过官方客户端登录。新增账号保存后启动即可登录；本地存在凭据不代表账号有效。官方模式可设置客户端共用的 HTTP 代理，每条自定义 API 配置也可单独设置代理（海外中转站等）。Codex 自定义模式直连时只阻断 Electron 外壳的指定云端域名，不阻断内置 app-server 访问自定义 API；配置了代理时改走代理，不再阻断。
+官方账号可通过官方客户端登录；Codex 还支持 CLI 生成 PKCE 授权链接，在其他机器的浏览器登录后将完整回调 URL 粘贴回终端。后续 token 刷新由官方客户端负责；本地存在凭据不代表账号有效。官方模式可设置客户端共用的 HTTP 代理，每条自定义 API 配置也可单独设置代理（海外中转站等）。Codex 自定义模式直连时只阻断 Electron 外壳的指定云端域名，不阻断内置 app-server 访问自定义 API；配置了代理时改走代理，不再阻断。
 
 Claude 桌面版的自定义 API 通过它的第三方推理（3P）配置生效，保存时同步写入；桌面版只接受 `claude-*` 模型名，配置了其他模型名时阻止启动桌面版（Claude Code CLI 不受影响），留空则使用中转站的 `/v1/models` 列表。桌面版只在启动时读取配置，已在运行时需完全退出后再启动。
 
@@ -35,6 +35,8 @@ Codex 只托管 `model_providers.custom`；手工添加的其他 provider 在保
 ![自定义 API 设置](docs/images/custom-mode.png)
 
 ## 开发与验证
+
+终端运行 `acs` 进入配置列表与操作菜单，可独立完成增改、切换、Codex 官方登录和显式启动。管道或重定向下无参仍输出列表。脚本可使用 `acs login <配置 ID 或名称>`，从标准输入读一行完整回调 URL；地址与 state 校验通过且换 token 成功后才保存并设为当前。详见[CLI 用法](docs/features/usage.md#cli)。
 
 需要 Rust stable、Node.js 24；Windows 构建需要 MSVC C++ 构建工具和 Windows SDK，macOS 构建需要 Xcode Command Line Tools。
 

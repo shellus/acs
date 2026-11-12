@@ -4,8 +4,8 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `crates/core`（`acs-core`） | 配置、凭据、快照、代理、目标文件保存、历史修复、启动计划 |
-| `crates/cli`（`acs`） | 参数、确认、输出和退出码；调用核心 |
+| `crates/core`（`acs-core`） | 配置、凭据、Codex PKCE OAuth、快照、代理、目标文件保存、历史修复、启动计划 |
+| `crates/cli`（`acs`） | clap 参数、inquire 菜单与字段提示、对齐状态输出和退出码；调用核心 |
 | `src-tauri`（`acs-gui`） | IPC、窗口生命周期、后台修复和进度事件 |
 | `ui/src` | React + Radix Themes 表单、内存草稿、显示与确认 |
 
@@ -60,6 +60,14 @@ Claude 桌面版忽略 `settings.json` 的 `ANTHROPIC_BASE_URL`，同一次保�
 
 外部 API 只按地址和 Key 刷新已有条目；无法匹配时不创建配置。官方凭据只刷新已知账号，或绑定已选中的未登录配置，保留既有 ID；未知账号不自动添加。新增配置由 GUI“添加”或 CLI `add` 显式完成。
 
+## CLI 与 OAuth
+
+无参仅在 stdin/stdout 都是终端时进入菜单，其余情况保留列表输出。inquire 使用 crossterm 后端，支持 Windows 和 Linux musl，无全屏 UI。`NO_COLOR` 令提示与状态输出不使用颜色。子命令与菜单共用操作和保存入口；只有字段编辑期间保留局部表单，校验失败不丢失输入，其他动作完成即保存，无跨菜单草稿。业务校验及多文件基线检查仍由核心负责。历史修复先确认，终端 stderr 刷新同一行的真实 `n/total`，重定向时逐行输出。
+
+`oauth::Login` 在开始时读取隔离 Store 和目标 Codex 官方账号，生成随机 state、PKCE verifier 及 S256 challenge。授权使用 Codex 公共 OAuth client、固定 localhost 回调及 OpenAI HTTPS token 端点，不启用监听服务。完成时严格校验 URL、state、唯一 code，再提交带 verifier 的一次性表单请求；禁用 HTTP 重定向，限定网络等待和响应大小，不自动重放 token POST。配置的官方代理优先生效，不修改父进程环境。
+
+成功响应须包含非空 id/access/refresh token 及账号 ID。JWT 仅提取账号摘要，可信边界是 TLS token 端点；凭据写成 Codex 的 `auth_mode=chatgpt`、`tokens`、`last_refresh` 格式。更新目标账号快照、选中项和活动认证仍使用 Session 原基线及 Store 提交/回滚；浏览器流程期间的外部变化也会阻止覆盖。失败响应正文、回调 URL、code 和 token 不进入错误或常规日志，核心对象不实现 Debug/Serialize。端点替换仅为核心私有函数的单元测试调用，正式 CLI 无端点覆盖或测试入口。OAuth 后续刷新由官方客户端负责，GUI 可复用协议逻辑但目前仍由客户端登录。
+
 ## 数据迁移
 
 配置库只读取 `~/.acs/profiles.json`，缺失时从空库开始，不扫描旧配置库或自动导入账号。既有数据的导入、ID 重编号在升级时独立执行一次：备份原文件，同步修改配置 ID 和选中引用，保留其他字段；不在程序中保留兼容分支或升级测试。
@@ -76,6 +84,7 @@ Claude 桌面版忽略 `settings.json` 的 `ANTHROPIC_BASE_URL`，同一次保�
 
 - 核心：Claude 桌面版 3P/1P 同步、用户条目保留、幂等与外部切换阻止启动、8 位 ID 与跨客户端/模式唯一性、保存/启动分离、目标文件外部变化、写入失败逐点回滚、快照往返、已有账号登录捕获与退出、未知账号不自动创建、部分凭据阻止、外部 API 归属、代理校验/幂等/父环境隔离、自定义 API 按配置代理与域名阻断取舍、路由冲突、备份/WAL、幂等、多数据库与文件失败回滚。
 - CLI：实际二进制两个客户端的增改删、ID 前缀定位、歧义与未知目标报错、代理读写隔离、修复确认。
+- OAuth：随机 PKCE/授权链接、回调地址和重复参数、state、授权拒绝、本地假 token 服务的表单交换、凭据格式与选中项、失败不落盘和授权期间外部变化；不请求真实 token 端点。提示层无需端到端测试。
 - Web 界面：两份草稿独立、失败与重试、三个关闭入口、修复确认、浅深色、默认与最小窗口和大文本。
 - Windows 正式 GUI：fixture、实际 IPC、保存与外部冲突、取消关闭和 Esc、退出记住窗口几何与再次打开按记住尺寸还原；脚本不进入正式二进制。
 
@@ -90,6 +99,8 @@ CI 在三个系统运行核心/CLI 回归，构建 Windows/macOS GUI。构建和
 Windows 常规测试验证参数转义、环境传递、父环境不变和目标进程创建失败。有 Codex 商店包的机器可运行 `cargo test -p acs-core --locked installed_package_preserves_launch_environment -- --ignored`，通过隔离探针验证真实包上下文中的两种模式与失败回传；探针不读取真实用户配置。该检查验证启动链路，不代表真实账号联网成功。
 
 ## 仍需关注的边界
+
+- `run` / `proxy` 未给 `--agent` 时仍默认 Codex；后续评估是否要求显式客户端，本次保持脚本兼容。
 
 - Claude 桌面版的 `deploymentMode` 与 `configLibrary` 格式未公开，依据桌面版 3.6556 的实际读取逻辑；升级后需复核。桌面版在 3P 登录页切回 Anthropic 登录会改写 `deploymentMode`，此后启动校验要求重新保存。
 - Claude 桌面版的官方账号登录保存在桌面版自身，acs 的多官方账号切换只作用于 Claude Code。

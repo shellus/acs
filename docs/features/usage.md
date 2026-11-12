@@ -30,7 +30,7 @@ API 地址使用 `https://主机/路径/v1`（Claude 填 `https://主机` 即可
 
 ![官方账号设置](../images/official-mode.png)
 
-Codex 的登录、刷新和联网验证由 Codex 完成，Claude 由 Claude Code 完成。新增账号不携带其他账号旧令牌；客户端明确退出登录后，不再恢复该账号旧凭据。部分损坏的令牌阻止读取，避免误判为退出登录。
+Codex 可通过官方客户端或 acs CLI 的回调 URL 流程登录，刷新和联网验证仍由 Codex 完成，Claude 由 Claude Code 完成。新增账号不携带其他账号旧令牌；客户端明确退出登录后，不再恢复该账号旧凭据。部分损坏的令牌阻止读取，避免误判为退出登录。
 
 官方账号的 HTTP 代理按客户端设置，同一客户端的官方账号共用；自定义 API 的代理按配置单独设置，部署在海外的中转站等需要代理时填写，留空直连。生效的代理只影响新启动客户端、子进程和读取同一配置的 CLI，不修改系统代理或父终端环境。Codex 的代理写在 `.env` 的托管区块，Claude 的代理写在 `settings.json` 的 `ANTHROPIC_*` 同级环境变量。当前模式的代理为空时，仅移除管理的键，原有内容保留；原有代理变量仍可能生效。
 
@@ -44,7 +44,19 @@ Codex 桌面版在自定义 API 模式直连时阻断 Electron 外壳的 OpenAI 
 
 ## CLI
 
-修改命令会保存，但不自动启动；`run` 是唯一启动入口。`--agent` 是全局参数，`ls` 用它过滤，`run` 和 `proxy` 用它选客户端（默认 Codex）。
+修改命令会保存，但不自动启动；只有显式菜单启动操作或 `run` 会启动客户端。`--agent` 是全局参数，`ls` 和配置选择器用它过滤，`run` 和 `proxy` 用它选客户端（默认 Codex）。
+
+### 交互菜单
+
+stdin 和 stdout 都是终端时，直接运行 `acs` 进入提示式菜单；任一被管道或重定向时，无参仍输出 `ls`。列表按终端字符宽度对齐，每行显示客户端、当前标记、完整 ID、名称、类型、地址或账号摘要、模型和代理。终端 `ls` 将当前项着色，设置 `NO_COLOR` 禁用颜色。
+
+主菜单的配置列表兼作状态视图，下面提供新增、启动 Codex、启动 Claude、官方代理、修复历史和退出。选择配置后可设为当前、设为当前并启动、编辑、改名、复制、删除；Codex 官方账号另有登录。官方账号复制只新建未登录条目，不复制令牌。Esc 返回上一级，主菜单 Esc 退出。输入名称或摘要可筛选列表。
+
+新增向导依次选择客户端、类型、名称，自定义 API 进入字段菜单；Codex 官方账号保存后可选择立即登录。自定义 API 逐项修改后显式保存或放弃；保存失败展示核心错误并保留已填内容。API Key 的表单摘要与 GUI 一样显示原值，重新输入使用隐藏提示，Esc 保留原值。菜单操作与子命令共用保存操作，菜单间不保留草稿。
+
+`use`、`edit`、`rm` 缺少目标及 `add` 缺少参数时，终端下进入选择器或向导；非终端下报用法错误。终端中 `edit <配置>` 不带字段进入编辑表单。启动菜单选择 CLI 或桌面版；Linux 只显示 CLI。启动 CLI 后 acs 使用客户端的退出码退出。
+
+### 子命令与远程登录
 
 ```sh
 acs --help
@@ -61,7 +73,18 @@ acs add claude custom "example Claude" --url https://claude.example.com --key ex
 acs add codex custom "example copy" --copy example-api
 ```
 
-`--key` 会把 Key 写进 shell 历史与进程列表；只在本机排障时这样用，日常请在 GUI 里填写。
+`--key` 会把 Key 写进 shell 历史与进程列表；日常可在交互菜单中隐藏输入，或在 GUI 里填写。
+
+```sh
+acs add codex official "example account"
+acs login "example account"
+```
+
+`login` 只支持 Codex 官方账号。它打印本次 PKCE 授权链接；在任意能访问 OpenAI 的浏览器打开并完成登录，跳转到 `http://localhost:1455/auth/callback` 后，即使页面打不开，也可复制地址栏的完整 URL 回终端。acs 不监听本地端口、不需要 SSH 转发。终端粘贴隐藏输入；非交互调用从 stdin 读取一行，便于外部程序通过管道传入。不要把实际回调 URL 放入命令参数、shell 历史或日志。
+
+每次登录的 state 和 PKCE verifier 独立生成，只驻留内存。acs 校验回调地址、唯一参数及 state 后换取 token，使用该客户端保存的官方 HTTP 代理（未设置则遵循进程网络代理）。成功后保存 `auth.json` 和配置库，并将该配置设为 Codex 当前官方账号；不启动客户端。地址错误、state 不匹配、授权拒绝、网络失败、无效 token 或配置外部变化均报错，失败不保存半份凭据。回调 code 和 token 不写常规日志。后续 token 刷新仍由 Codex 负责。
+
+隔离验证可运行 `acs --root /tmp/example-acs login <配置>`，然后使用 `CODEX_HOME=/tmp/example-acs/codex codex login status` 检查官方客户端是否识别凭据；该命令只检查本地登录状态，不代表已完成联网请求验证。
 
 ```sh
 acs edit example-api --model example-other-model

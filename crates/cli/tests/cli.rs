@@ -242,3 +242,98 @@ fn proxy_command_reads_and_writes_the_selected_client_only() {
         .status
         .success());
 }
+
+#[test]
+fn pipes_keep_listing_missing_arguments_are_usage_errors_and_invalid_login_never_writes() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(ok(dir.path(), &[]), ok(dir.path(), &["ls"]));
+    for args in [
+        &["add"][..],
+        &["add", "codex"],
+        &["use"],
+        &["edit"],
+        &["rm"],
+    ] {
+        assert_eq!(acs(dir.path(), args).status.code(), Some(2));
+    }
+    ok(dir.path(), &["add", "codex", "official", "example account"]);
+    let store = acs_core::Store::new(acs_core::Roots::under(dir.path()));
+    let before = store.snapshot().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_acs"))
+        .arg("--root")
+        .arg(dir.path())
+        .args(["login", "example account"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"http://localhost:1455/auth/callback?state=wrong&code=example-private-code\n")
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout)
+        .contains("https://auth.openai.com/oauth/authorize?"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("state"));
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("example-private-code"));
+    assert_eq!(store.snapshot().unwrap(), before);
+    let logs = fs::read_to_string(dir.path().join("acs/logs/acs.log")).unwrap();
+    assert!(!logs.contains("example-private-code"));
+}
+
+#[test]
+fn invalid_edit_preserves_saved_files_and_copy_retains_source_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    ok(
+        dir.path(),
+        &[
+            "add",
+            "codex",
+            "custom",
+            "example API",
+            "--url",
+            "https://api.example.com/v1",
+            "--key",
+            "example-key",
+            "--model",
+            "example-model",
+        ],
+    );
+    let store = acs_core::Store::new(acs_core::Roots::under(dir.path()));
+    let before = store.snapshot().unwrap();
+    assert!(
+        !acs(dir.path(), &["edit", "example API", "--url", "invalid"])
+            .status
+            .success()
+    );
+    assert_eq!(store.snapshot().unwrap(), before);
+    ok(
+        dir.path(),
+        &[
+            "add",
+            "codex",
+            "custom",
+            "example copy",
+            "--copy",
+            "example API",
+        ],
+    );
+    let s = acs_core::Session::open(store).unwrap();
+    assert_eq!(s.original.codex.library.custom_providers.len(), 2);
+    assert_eq!(
+        s.original
+            .codex
+            .custom_fields
+            .values()
+            .map(|f| &f.base_url)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        1
+    );
+}

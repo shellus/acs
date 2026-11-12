@@ -1,15 +1,17 @@
+mod display;
+mod interactive;
 use acs_core::{Agent, CustomFields, Draft, Mode, Roots, Session, Store};
 use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::PathBuf,
 };
 
 #[derive(Parser)]
 #[command(
     version,
-    about = "管理 Codex 与 Claude 的官方账号、自定义 API 与独立代理；只有 run 会启动客户端"
+    about = "管理 Codex 与 Claude 的配置与登录；无参进入交互菜单，显式启动客户端"
 )]
 struct Cli {
     /// 把全部配置根目录放到该目录下，用于隔离测试
@@ -94,7 +96,7 @@ impl ApiFields {
 
 #[derive(Subcommand)]
 enum Action {
-    /// 列出两个客户端的全部配置；不写子命令时执行同样的动作
+    /// 列出两个客户端的全部配置；无参且连接终端时进入菜单
     #[command(alias = "list")]
     Ls,
     /// 输出完整编辑草稿（包含凭据），可配合 apply 使用
@@ -104,10 +106,10 @@ enum Action {
     /// 新增配置并保存；不启动
     Add {
         #[arg(value_enum)]
-        agent: AgentArg,
+        agent: Option<AgentArg>,
         #[arg(value_enum)]
-        kind: Kind,
-        name: String,
+        kind: Option<Kind>,
+        name: Option<String>,
         /// 复制已有自定义 API 配置作为初值
         #[arg(short, long)]
         copy: Option<String>,
@@ -116,20 +118,22 @@ enum Action {
     },
     /// 按 ID、ID 前缀或名称定位自定义 API 配置并修改
     Edit {
-        target: String,
+        target: Option<String>,
         #[command(flatten)]
         fields: ApiFields,
     },
     /// 按 ID、ID 前缀或名称定位并切换配置；不启动
-    Use { target: String },
+    Use { target: Option<String> },
     /// 按 ID、ID 前缀或名称定位并改名
     Mv { target: String, name: String },
     /// 按 ID、ID 前缀或名称定位并删除
     Rm {
-        target: String,
+        target: Option<String>,
         #[arg(short, long)]
         yes: bool,
     },
+    /// Codex 官方账号通过粘贴浏览器回调 URL 登录，成功后设为当前
+    Login { target: String },
     /// 设置当前客户端官方账号共用的代理；空字符串禁用；不带参数只显示。自定义 API 用 edit --proxy
     Proxy { url: Option<String> },
     /// 修复 Codex 历史对话的 provider ID；先备份
@@ -163,6 +167,12 @@ fn main() {
 fn confirm(yes: bool, message: &str) -> Result<()> {
     if yes {
         return Ok(());
+    }
+    if terminal() {
+        if interactive::confirmed(message)? {
+            return Ok(());
+        }
+        bail!("已取消，未修改文件");
     }
     eprint!("{message} [y/N] ");
     io::stderr().flush()?;
@@ -213,11 +223,34 @@ fn locate(draft: &Draft, query: &str) -> Result<(Agent, Mode, String)> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if !terminal() {
+        let missing = match &cli.command {
+            Some(Action::Add {
+                agent, kind, name, ..
+            }) => agent.is_none() || kind.is_none() || name.is_none(),
+            Some(
+                Action::Edit { target, .. } | Action::Use { target } | Action::Rm { target, .. },
+            ) => target.is_none(),
+            _ => false,
+        };
+        if missing {
+            Cli::command()
+                .error(
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    "非终端输入必须提供完整参数；使用 acs <命令> --help 查看用法",
+                )
+                .exit();
+        }
+    }
     let store = match cli.root {
         Some(path) => Store::new(Roots::under(&path)),
         None => Store::discover()?,
     };
-    let result = execute(store.clone(), cli.command.unwrap_or(Action::Ls), cli.agent);
+    let result = match cli.command {
+        None if terminal() => interactive::menu(store.clone(), cli.agent),
+        Some(action) if terminal() => interactive::dispatch(store.clone(), action, cli.agent),
+        action => execute(store.clone(), action.unwrap_or(Action::Ls), cli.agent),
+    };
     if let Err(error) = &result {
         store.log("CLI", &format!("{error:#}"));
     }
@@ -227,8 +260,17 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
     if let Action::Repair { yes } = action {
         confirm(yes, "将 Codex 的 sessions、archived_sessions 和 SQLite 历史的 provider ID 改为 custom；请先关闭正在写入历史的 Codex。继续？")?;
         let report = acs_core::history::repair(&store, |p| {
-            eprintln!("{} {}/{}", p.phase, p.completed, p.total)
-        })?;
+            if io::stderr().is_terminal() {
+                eprint!("\r{} {}/{}      ", p.phase, p.completed, p.total);
+                let _ = io::stderr().flush();
+            } else {
+                eprintln!("{} {}/{}", p.phase, p.completed, p.total);
+            }
+        });
+        if io::stderr().is_terminal() {
+            eprintln!();
+        }
+        let report = report?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
@@ -237,7 +279,7 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
     let mut draft: Draft = session.original.clone();
     match action {
         Action::Ls => {
-            list(&draft, selected.map(Into::into));
+            display::list(&draft, selected.map(Into::into));
             Ok(())
         }
         Action::Export => {
@@ -257,23 +299,19 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
             copy,
             fields,
         } => {
-            let agent: Agent = agent.into();
-            let mode: Mode = kind.into();
+            let agent: Agent = required(agent, "add <agent> <kind> <name>")?.into();
+            let mode: Mode = required(kind, "add <agent> <kind> <name>")?.into();
+            let name = required(name, "add <agent> <kind> <name>")?;
             if mode == Mode::Official && !fields.is_empty() {
                 bail!("官方账号的凭据由官方客户端登录维护，请只给出名称")
             }
-            let target = draft.agent_mut(agent);
-            let id = target.add(mode, &name, copy.as_deref())?;
-            if mode == Mode::Custom {
-                fields.apply(target.custom_fields.get_mut(&id).unwrap());
-            }
-            target.mode = mode;
+            let id = prepare_add(&mut draft, agent, mode, &name, copy.as_deref(), &fields)?;
             save(&mut session, &revision, &draft, agent)?;
             eprintln!("配置 ID：{id}");
             Ok(())
         }
         Action::Edit { target, fields } => {
-            let (agent, mode, id) = locate(&draft, &target)?;
+            let (agent, mode, id) = locate(&draft, &required(target, "请提供配置 ID 或名称")?)?;
             if mode == Mode::Official {
                 bail!("官方账号的凭据由官方客户端登录维护；改名请用 mv")
             }
@@ -287,35 +325,48 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
             save(&mut session, &revision, &draft, agent)
         }
         Action::Use { target } => {
-            let (agent, mode, id) = locate(&draft, &target)?;
+            let (agent, mode, id) = locate(&draft, &required(target, "请提供配置 ID 或名称")?)?;
             let target = draft.agent_mut(agent);
             target.mode = mode;
             target.library.select(mode, id);
             save(&mut session, &revision, &draft, agent)
         }
         Action::Mv { target, name } => {
-            if name.trim().is_empty() {
-                bail!("请输入名称")
-            }
             let (agent, mode, id) = locate(&draft, &target)?;
-            draft
-                .agent_mut(agent)
-                .library
-                .profiles_mut(mode)
-                .iter_mut()
-                .find(|p| p.id == id)
-                .context("配置不存在")?
-                .name = Some(name.trim().into());
+            draft.agent_mut(agent).rename(mode, &id, &name)?;
             save(&mut session, &revision, &draft, agent)
         }
         Action::Rm { target, yes } => {
-            let (agent, mode, id) = locate(&draft, &target)?;
+            let (agent, mode, id) = locate(&draft, &required(target, "请提供配置 ID 或名称")?)?;
             confirm(
                 yes,
                 &format!("删除 {} 的配置 {} 并保存？", agent.label(), id),
             )?;
             draft.agent_mut(agent).delete(mode, &id)?;
             save(&mut session, &revision, &draft, agent)
+        }
+        Action::Login { target } => {
+            let (agent, mode, id) = locate(&draft, &target)?;
+            if agent != Agent::Codex || mode != Mode::Official {
+                bail!("登录仅支持 Codex 官方账号配置")
+            }
+            let login = acs_core::oauth::Login::begin(session.store.clone(), &id)?;
+            println!(
+                "在任意有浏览器的机器打开以下链接并登录：\n{}",
+                login.authorization_url()
+            );
+            eprintln!("跳转 localhost 后页面打不开也可，粘贴地址栏完整回调 URL（输入隐藏）：");
+            io::stdout().flush()?;
+            let callback = if terminal() {
+                interactive::secret("回调 URL")?.context("已取消登录")?
+            } else {
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                input
+            };
+            login.complete(&callback)?;
+            println!("已保存 Codex 官方登录凭据并设为当前；后续刷新由官方客户端负责");
+            Ok(())
         }
         Action::Proxy { url } => {
             let agent = selected.map(Into::into).unwrap_or(Agent::Codex);
@@ -362,59 +413,34 @@ fn save(session: &mut Session, revision: &str, draft: &Draft, agent: Agent) -> R
     println!("已保存配置；未启动客户端");
     Ok(())
 }
-fn list(draft: &Draft, only: Option<Agent>) {
-    for agent in Agent::ALL {
-        if only.is_some_and(|a| a != agent) {
-            continue;
-        }
-        let d = draft.agent(agent);
-        println!("{} · 当前 {}", agent.label(), d.mode.label());
-        let mut empty = true;
-        for mode in [Mode::Official, Mode::Custom] {
-            let profiles = d.library.profiles(mode);
-            if profiles.is_empty() {
-                continue;
+fn prepare_add(
+    draft: &mut Draft,
+    agent: Agent,
+    mode: Mode,
+    name: &str,
+    copy: Option<&str>,
+    fields: &ApiFields,
+) -> Result<String> {
+    let copy_id = copy
+        .map(|q| -> Result<String> {
+            let (a, m, id) = locate(draft, q)?;
+            if a != agent || m != Mode::Custom || mode != Mode::Custom {
+                bail!("只能复制同一客户端的自定义 API 配置")
             }
-            empty = false;
-            println!("  {}", mode.label());
-            for p in profiles {
-                let selected = d.mode == mode && d.library.selection(mode) == p.id;
-                let name = p
-                    .name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("未命名配置");
-                let detail = match mode {
-                    Mode::Official => p
-                        .email
-                        .clone()
-                        .or_else(|| p.account_name.clone())
-                        .unwrap_or_else(|| {
-                            if p.official_auth.is_some() {
-                                "已保存本地凭据".into()
-                            } else {
-                                "尚未登录".into()
-                            }
-                        }),
-                    Mode::Custom => d
-                        .custom_fields
-                        .get(&p.id)
-                        .map(|f| f.base_url.trim().to_owned())
-                        .filter(|u| !u.is_empty())
-                        .unwrap_or_else(|| "未填写地址".into()),
-                };
-                println!(
-                    "    {} {}  {}  {}",
-                    if selected { '*' } else { ' ' },
-                    p.id,
-                    name,
-                    detail
-                );
-            }
-        }
-        if empty {
-            println!("  （没有配置）");
-        }
+            Ok(id)
+        })
+        .transpose()?;
+    let target = draft.agent_mut(agent);
+    let id = target.add(mode, name, copy_id.as_deref())?;
+    if mode == Mode::Custom {
+        fields.apply(target.custom_fields.get_mut(&id).context("API 表单缺失")?);
     }
+    target.mode = mode;
+    Ok(id)
+}
+fn terminal() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+fn required<T>(value: Option<T>, usage: &str) -> Result<T> {
+    value.with_context(|| format!("缺少参数：{usage}；使用 acs --help 查看用法"))
 }

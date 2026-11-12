@@ -13,6 +13,8 @@ acs-core = { path = "../core" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
+inquire = { version = "0.9", default-features = false, features = ["crossterm"] }
+unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

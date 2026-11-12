@@ -309,6 +309,18 @@ impl AgentDraft {
         }
         Ok(())
     }
+    pub fn rename(&mut self, mode: Mode, id: &str, name: &str) -> Result<()> {
+        if name.trim().is_empty() {
+            bail!("请输入名称")
+        }
+        self.library
+            .profiles_mut(mode)
+            .iter_mut()
+            .find(|p| p.id == id)
+            .context("配置不存在")?
+            .name = Some(name.trim().into());
+        Ok(())
+    }
     /// 把表单写回配置并规范化代理，返回当前模式选中的配置。
     pub(crate) fn resolve(&mut self) -> Result<Profile> {
         self.library.validate()?;

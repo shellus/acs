@@ -15,7 +15,7 @@
 - `model_provider` 是历史对话使用的 provider ID；自定义 API 模式固定为 `custom`，官方账号模式使用内置 `openai`。
 - 表单中的“提供者名称”只对应 `[model_providers.custom].name`，不得作为 provider ID 写入历史数据。
 - 模式切换更新 `config.toml`、`auth.json` 与本机 `~/.acs/profiles.json`；切换 Tab 不落盘，保存或切换模式不得隐式修复历史对话。
-- 官方模式由官方客户端登录及刷新 OAuth 凭证，启动时不得携带域名阻断或自定义 API 环境变量。仅凭本地凭证存在不得声称账号有效。
+- Codex 官方模式支持 acs 核心的 PKCE 授权链接与粘贴完整回调 URL 登录，也可由官方客户端登录；后续 OAuth 刷新仍由官方客户端负责。Claude 登录与刷新由官方客户端负责。回调须严格校验地址及 state，换 token 与保存失败不得留下半写凭据，不记录回调 code 或 token。官方启动不得携带域名阻断或自定义 API 环境变量；仅凭本地凭证存在不得声称账号有效。
 - 官方代理按客户端保存在 `official_proxy_url`，自定义 API 代理按配置保存在 `custom_proxy_url`；当前模式生效的代理同步到 Codex `.env` 的 `ACS PROXY` 标记区块和 Claude `settings.json` 的 env，并注入桌面启动参数和子进程环境。不得修改 Windows 系统代理或用户环境变量；生效代理为空时只移除管理区块或键，保留原有内容。回归覆盖地址校验、父进程环境不变、幂等、禁用、模式保留、异常标记预检及包含 `.env` 的目标文件保存失败回滚。
 - 切换前保留当前凭证及各模式模型设置，官方退出登录后不得恢复旧令牌。多文件保存失败必须尝试恢复原状态并阻止启动。
 - 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；存在显式限制时提示冲突。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。

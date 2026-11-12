@@ -3,6 +3,7 @@ pub mod codex;
 pub mod config;
 pub mod history;
 pub mod launch;
+pub mod oauth;
 pub mod storage;
 
 pub use config::{
