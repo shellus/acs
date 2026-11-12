@@ -103,6 +103,10 @@ enum Action {
     Export,
     /// 应用 export 的 JSON 文件，校验文件内 revision
     Apply { file: PathBuf },
+    /// 导出仅含自定义 API 的可迁移配置包（含 Key，不含官方账号）
+    ExportCustom { file: PathBuf },
+    /// 导入自定义配置包，只写配置库，保留当前生效文件
+    ImportCustom { file: PathBuf },
     /// 新增配置并保存；不启动
     Add {
         #[arg(value_enum)]
@@ -278,6 +282,16 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
     let revision = session.view().revision;
     let mut draft: Draft = session.original.clone();
     match action {
+        Action::ExportCustom { file } => {
+            let count = acs_core::transfer::export(session.store.clone(), &file)?;
+            println!("已导出 {count} 条自定义配置");
+            Ok(())
+        }
+        Action::ImportCustom { file } => {
+            let count = acs_core::transfer::import(session.store.clone(), &file)?;
+            println!("已导入 {count} 条配置；当前生效配置未改写");
+            Ok(())
+        }
         Action::Ls => {
             display::list(&draft, selected.map(Into::into));
             Ok(())

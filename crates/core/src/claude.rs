@@ -110,6 +110,19 @@ pub fn apply_fields(f: &CustomFields, p: &mut Profile) {
     p.custom_model = Some(f.model.trim().into());
 }
 
+pub(crate) fn active_custom(baseline: &Snapshot) -> Result<Option<Profile>> {
+    let settings = json(&baseline[CLAUDE_SETTINGS], "settings.json")?;
+    if active_mode(&settings) != Mode::Custom {
+        return Ok(None);
+    }
+    Ok(Some(Profile {
+        custom_base_url: env(&settings, BASE_URL).as_str().map(str::to_owned),
+        custom_key: env(&settings, TOKEN).as_str().map(str::to_owned),
+        custom_model: settings["model"].as_str().map(str::to_owned),
+        custom_proxy_url: env(&settings, "HTTP_PROXY").as_str().map(str::to_owned),
+        ..Default::default()
+    }))
+}
 pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> {
     library.validate()?;
     let settings = json(&baseline[CLAUDE_SETTINGS], "settings.json")?;
@@ -128,18 +141,17 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
     }
     capture_official(&mut library, &credentials, &account, active)?;
     if active == Mode::Custom {
-        let mut p = Profile {
-            custom_base_url: env(&settings, BASE_URL).as_str().map(str::to_owned),
-            custom_key: env(&settings, TOKEN).as_str().map(str::to_owned),
-            custom_model: settings["model"].as_str().map(str::to_owned),
-            custom_proxy_url: env(&settings, "HTTP_PROXY").as_str().map(str::to_owned),
-            ..Default::default()
-        };
+        let mut p = active_custom(baseline)?.unwrap();
         let f = fields(&p);
-        let existing = library.custom_providers.iter().position(|old| {
+        let matches = |old: &Profile| {
             let old = fields(old);
             old.base_url == f.base_url && old.api_key == f.api_key
-        });
+        };
+        let existing = library
+            .custom_providers
+            .iter()
+            .position(|old| old.id == library.selected_custom && matches(old))
+            .or_else(|| library.custom_providers.iter().position(matches));
         if let Some(i) = existing {
             p.id = library.custom_providers[i].id.clone();
             p.name = library.custom_providers[i].name.clone();

@@ -117,6 +117,26 @@ fn provider_snapshot(doc: &DocumentMut) -> String {
     out.to_string()
 }
 
+pub(crate) fn active_custom(baseline: &Snapshot) -> Result<Option<Profile>> {
+    let doc = parse_doc(text(&baseline[CODEX_CONFIG])?)?;
+    if mode(&doc) != Mode::Custom {
+        return Ok(None);
+    }
+    let credentials = json(&baseline[CODEX_AUTH], "auth.json")?;
+    let proxy = text(&baseline[CODEX_ENV])?
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("HTTP_PROXY="))
+        .next_back()
+        .map(|s| s.trim().trim_matches(['\'', '"']).to_owned());
+    Ok(Some(Profile {
+        model_providers_toml: Some(provider_snapshot(&doc)),
+        custom_key: credentials["OPENAI_API_KEY"].as_str().map(str::to_owned),
+        custom_model: Some(string(&doc, "model")),
+        custom_effort: Some(string(&doc, "model_reasoning_effort")),
+        custom_proxy_url: proxy,
+        ..Default::default()
+    }))
+}
 pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> {
     library.validate()?;
     let doc = parse_doc(text(&baseline[CODEX_CONFIG])?)?;
@@ -124,17 +144,16 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
     let active = mode(&doc);
     capture_official(&mut library, &doc, &credentials)?;
     if active == Mode::Custom {
-        let mut p = Profile {
-            model_providers_toml: Some(provider_snapshot(&doc)),
-            custom_key: credentials["OPENAI_API_KEY"].as_str().map(str::to_owned),
-            custom_model: Some(string(&doc, "model")),
-            custom_effort: Some(string(&doc, "model_reasoning_effort")),
-            ..Default::default()
-        };
+        let mut p = active_custom(baseline)?.unwrap();
         let f = fields(&p)?;
-        let existing = library.custom_providers.iter().position(|old| {
+        let matches = |old: &Profile| {
             fields(old).is_ok_and(|old| old.base_url == f.base_url && old.api_key == f.api_key)
-        });
+        };
+        let existing = library
+            .custom_providers
+            .iter()
+            .position(|old| old.id == library.selected_custom && matches(old))
+            .or_else(|| library.custom_providers.iter().position(matches));
         if let Some(i) = existing {
             p.id = library.custom_providers[i].id.clone();
             p.name = library.custom_providers[i].name.clone();

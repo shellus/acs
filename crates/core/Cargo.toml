@@ -12,7 +12,7 @@ path = "src/lib.rs"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-toml_edit = "0.22"
+toml_edit = { version = "0.22", features = ["serde"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"

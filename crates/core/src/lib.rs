@@ -5,6 +5,7 @@ pub mod history;
 pub mod launch;
 pub mod oauth;
 pub mod storage;
+pub mod transfer;
 
 pub use config::{
     Agent, AgentDraft, CustomFields, Draft, Libraries, Library, Mode, Profile, Session, View,
