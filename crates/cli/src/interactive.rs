@@ -1244,11 +1244,20 @@ import os,pty,termios,fcntl,subprocess,select,time,sys,signal
 signal.alarm(25)
 master,slave=pty.openpty()
 os.set_blocking(master,False)
-before=termios.tcgetattr(slave)
 def setup():
  os.setsid()
  fcntl.ioctl(slave,termios.TIOCSCTTY,0)
-child=subprocess.Popen([sys.argv[1],'--exact','interactive::tests::terminal_panic_probe','--ignored','--nocapture'],stdin=slave,stdout=slave,stderr=slave,preexec_fn=setup)
+# Keep the session leader alive while inspecting attributes: macOS revokes its
+# PTY when the leader exits, even if the outer process still holds the slave.
+runner=r'''
+import subprocess,sys,termios
+before=termios.tcgetattr(0)
+probe=subprocess.run([sys.argv[1],'--exact','interactive::tests::terminal_panic_probe','--ignored','--nocapture'],timeout=10)
+assert probe.returncode!=0
+assert termios.tcgetattr(0)==before
+print('ACS_PANIC_RECOVERY_OK',flush=True)
+'''
+child=subprocess.Popen([sys.executable,'-c',runner,sys.argv[1]],stdin=slave,stdout=slave,stderr=slave,preexec_fn=setup)
 out=b''
 deadline=time.monotonic()+15
 while time.monotonic()<deadline:
@@ -1267,8 +1276,8 @@ while time.monotonic()<deadline:
    out+=chunk
   break
 child.wait(timeout=5)
-assert child.returncode!=0
-assert termios.tcgetattr(slave)==before
+assert child.returncode==0,out.decode(errors='replace')
+assert b'ACS_PANIC_RECOVERY_OK' in out
 marker=out.index(b'example terminal panic recovery probe')
 assert out.index(b'\x1b[?1049l')<marker
 assert out.index(b'\x1b[?25h')<marker
