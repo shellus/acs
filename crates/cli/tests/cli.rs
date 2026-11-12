@@ -351,3 +351,172 @@ fn invalid_edit_preserves_saved_files_and_copy_retains_source_fields() {
     .success());
     assert_eq!(store.snapshot().unwrap(), before);
 }
+#[test]
+fn environment_commands_are_isolated_and_missing_arguments_are_usage_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    let r = repo.path();
+    fs::write(
+        r.join("environment.yaml"),
+        include_str!("../../core/tests/fixtures/environment/environment.yaml"),
+    )
+    .unwrap();
+    fs::write(
+        r.join("environment.lock"),
+        include_str!("../../core/tests/fixtures/environment/environment.lock"),
+    )
+    .unwrap();
+    fs::create_dir_all(r.join("instructions")).unwrap();
+    fs::write(r.join("instructions/global.md"), "example").unwrap();
+    fs::create_dir_all(r.join("skills/local/example-demo")).unwrap();
+    fs::write(r.join("skills/local/example-demo/SKILL.md"), "example").unwrap();
+    fs::create_dir_all(r.join("skills/vendor")).unwrap();
+    fs::write(
+        r.join("skills/vendor/.ags-snapshot.yaml"),
+        "version: 1\nsources: {}\nskills: {}\n",
+    )
+    .unwrap();
+    // 错误的账号文件证明 env 不打开账号 Session。
+    fs::create_dir_all(dir.path().join("codex")).unwrap();
+    fs::write(dir.path().join("codex/auth.json"), "example invalid json").unwrap();
+    ok(dir.path(), &["env", "source", "show"]);
+    assert!(!dir.path().join("acs/environment.yaml").exists());
+    ok(
+        dir.path(),
+        &["env", "validate", "--repo", r.to_str().unwrap()],
+    );
+    ok(
+        dir.path(),
+        &[
+            "env",
+            "source",
+            "set",
+            r.to_str().unwrap(),
+            "--branch",
+            "main",
+        ],
+    );
+    ok(
+        dir.path(),
+        &[
+            "env",
+            "configure",
+            "--profile",
+            "default",
+            "--agents",
+            "codex,claude",
+        ],
+    );
+    let saved = fs::read(dir.path().join("acs/environment.yaml")).unwrap();
+    for args in [
+        vec!["env"],
+        vec!["env", "source"],
+        vec!["env", "source", "set"],
+        vec!["env", "configure"],
+        vec!["env", "configure", "--profile"],
+        vec!["env", "validate"],
+        vec!["env", "configure", "--agents", "example-agent"],
+    ] {
+        assert_eq!(acs(dir.path(), &args).status.code(), Some(2), "{args:?}");
+    }
+    assert!(
+        !acs(dir.path(), &["env", "configure", "--profile", "unknown"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        saved,
+        fs::read(dir.path().join("acs/environment.yaml")).unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("codex/auth.json")).unwrap(),
+        "example invalid json"
+    );
+    assert!(!dir.path().join("acs/profiles.json").exists());
+    assert!(!dir.path().join(".agents").exists());
+    // 没有 git/node/npm 时的既有 ls 和 env source show 仍正常。
+    let clean = tempfile::tempdir().unwrap();
+    for args in [vec!["ls"], vec!["env", "source", "show"]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_acs"))
+            .arg("--root")
+            .arg(clean.path())
+            .args(args)
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+#[test]
+fn environment_remote_source_fetch_preserves_saved_config_on_failure() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    fs::write(
+        d.path().join("environment.yaml"),
+        include_str!("../../core/tests/fixtures/environment/environment.yaml"),
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("environment.lock"),
+        include_str!("../../core/tests/fixtures/environment/environment.lock"),
+    )
+    .unwrap();
+    let git = |args: &[&str]| {
+        let o = Command::new("git")
+            .current_dir(d.path())
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", local.path().join("example-gitconfig"))
+            .env("HOME", local.path())
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    git(&["init", "--initial-branch=main"]);
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=Example",
+        "-c",
+        "user.email=example@example.com",
+        "commit",
+        "-m",
+        "example fixture",
+    ]);
+    let path = d.path().to_string_lossy().replace('\\', "/");
+    let url = if cfg!(windows) {
+        format!("file:///{path}")
+    } else {
+        format!("file://{path}")
+    };
+    let run = |branch: &str| {
+        Command::new(env!("CARGO_BIN_EXE_acs"))
+            .arg("--root")
+            .arg(local.path())
+            .args(["env", "source", "set", &url, "--branch", branch])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", local.path().join("example-gitconfig"))
+            .env("HOME", local.path())
+            .output()
+            .unwrap()
+    };
+    assert!(run("main").status.success());
+    let saved = fs::read(local.path().join("acs/environment.yaml")).unwrap();
+    assert!(run("main").status.success());
+    assert_eq!(
+        fs::read(local.path().join("acs/environment.yaml")).unwrap(),
+        saved
+    );
+    assert!(!run("example-missing").status.success());
+    assert_eq!(
+        fs::read(local.path().join("acs/environment.yaml")).unwrap(),
+        saved
+    );
+}

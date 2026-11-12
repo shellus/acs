@@ -1,0 +1,5 @@
+version: 2
+agents:
+  codex: {version: '1.0.0'}
+  claude: {version: '2.0.0'}
+sources: {}

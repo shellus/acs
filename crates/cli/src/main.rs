@@ -1,4 +1,5 @@
 mod display;
+mod environment;
 mod interactive;
 use acs_core::{Agent, CustomFields, Draft, Mode, Roots, Session, Store};
 use anyhow::{bail, Context, Result};
@@ -96,6 +97,11 @@ impl ApiFields {
 
 #[derive(Subcommand)]
 enum Action {
+    /// 管理 Agent 环境来源与本机选择
+    Env {
+        #[command(subcommand)]
+        command: environment::Command,
+    },
     /// 列出两个客户端的全部配置；无参且连接终端时进入菜单
     #[command(alias = "list")]
     Ls,
@@ -246,6 +252,9 @@ fn run() -> Result<()> {
                 .exit();
         }
     }
+    if let Some(Action::Env { command }) = cli.command {
+        return environment::run(command, cli.root.as_deref());
+    }
     let store = match cli.root {
         Some(path) => Store::new(Roots::under(&path)),
         None => Store::discover()?,
@@ -282,6 +291,7 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
     let revision = session.view().revision;
     let mut draft: Draft = session.original.clone();
     match action {
+        Action::Env { .. } => unreachable!("env 在配置会话打开前分发"),
         Action::ExportCustom { file } => {
             let count = acs_core::transfer::export(session.store.clone(), &file)?;
             println!("已导出 {count} 条自定义配置");

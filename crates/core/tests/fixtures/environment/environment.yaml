@@ -1,0 +1,13 @@
+version: 2
+instructions: {global: instructions/global.md}
+skills: {local: skills/local, vendor: skills/vendor}
+agents:
+  codex: {package: '@openai/codex'}
+  claude: {package: '@anthropic-ai/claude-code'}
+profiles:
+  default:
+    include: ['*']
+    exclude: [example-hidden]
+    agents:
+      codex: {include: ['local:example-*'], exclude: [example-other], disabled_skills: [example-disabled]}
+      claude: {}
