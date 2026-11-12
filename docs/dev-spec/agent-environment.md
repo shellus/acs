@@ -68,9 +68,13 @@ uninstall 默认只移除受管内容、对应受管指令和禁用块，保留�
 ## TUI 接入接口
 
 - `Service::prepare()` / `prepare_with_progress(callback)` 同步来源并生成持有临时工作区的 Plan；可能联网、运行 npm ci 并耗时。应在后台工作线程调用，主线程继续渲染。`Plan::changes` 和 `packages` 用来展示差异与安装计划，`has_changes()` 表示是否需要应用。
-- 确认必须发生在展示完整计划之后，由 TUI 完成；核心 apply 不弹确认。取消时丢弃 Plan，自动清理暂存。确认后消费同一 Plan 调用 `apply_with_progress(&plan, callback)`，不得重新规划后静默应用另一份变化。基线变化时提示重新读取，保留旧视图以便核对。
-- Progress 包含 phase、completed、total。准备阶段先报告来源同步 0/1、1/1，再按当前 Agent 的实际 Skills 数报告计数；计数是当前批次而非全局百分比。事务阶段只报告 0/1 和成功提交后的 1/1，失败不会伪报完成。无中间回调的网络、npm 和单次复制阶段使用等待指示，不用时间估算百分比。
+- `Plan::config` 是准备时的本机配置快照，展示它可避免独立读取配置与计划之间的竞态。确认必须发生在展示计划之后，由 TUI 完成；核心 apply 不弹确认。确认后对同一 Plan 调用 `apply_with_progress(&plan, callback)`，不得重新规划后静默应用另一份变化。核心检查本机文件、Skills、来源声明/锁/指令/快照及 Agent 安装版本；`StalePlan` 错误要求重新读取和再次确认。
+- Progress 包含 phase、completed、total。准备阶段先报告来源同步 0/1、1/1，再按当前 Agent 的实际 Skills 数报告计数；应用报告基线核对、Agent 核对/安装和变更 Skills 暂存计数，均是当前批次而非全局百分比。事务阶段只报告 0/1 和成功提交后的 1/1，失败不会伪报完成。无中间回调的网络、npm 和单次复制阶段使用等待指示，不用时间估算百分比。
 - `doctor(paths, runner)` 返回逐项 Check 与修复提示；`update_lock`、`vendor`、self_update 的下载器均可独立调用。vendor 另有真实来源数和发布 Skill 数的进度。所有可能联网或调用外部命令的工作应离开 TUI 渲染线程。
 - 普通 apply/uninstall 已采用单 Skill 事务；`tree::DirectoryChange.stage` 的 None 表示移除。整根接管与 vendor 发布仍使用整目录事务。目录预期指纹在移动旧内容前读取；错误回滚继续保留外部修改并留下备份路径。
 
 本机文件名与迁移收据格式不变。锁由核心入口持有，TUI 不额外获取同一把锁。当前事务提供进程内错误恢复，不提供掉电恢复日志。CLI 稳定原始资产名、校验和与安装命令见 [维护与分发](../features/cli-maintenance.md)。
+
+CLI 的 `interactive/environment.rs` 持有页面状态、同一份 `Arc<Plan>` 和后台消息通道；主线程只处理按键与缓冲区渲染，核心执行器在工作线程内使用。`Runner` 本身不要求 Send，线程入口只接受可移动的具体执行器，测试注入本地 fixture 执行器。应用后重新准备；过期计划刷新后留在预览，不自动确认。普通失败清除可应用计划，保留原因和重试入口。账户 Session 同时重读基线，避免环境写入禁用块后账户页继续持有旧 config.toml 基线。
+
+运行中的任务不允许切回账号页，防止账号保存争用核心锁而阻塞渲染线程。应用时计划移入工作线程，页面只保留展示文字；刷新时旧计划也交由工作线程释放，避免临时 Skills 工作区清理阻塞渲染。Ctrl+C 只记录延迟退出请求，后台任务完成后由原终端守卫恢复屏幕；未实现外部命令中途取消。页面状态、滚动位置和导航不落盘。

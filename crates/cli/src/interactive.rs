@@ -1,3 +1,6 @@
+mod environment;
+#[cfg(test)]
+mod environment_tests;
 mod view;
 use super::*;
 use crossterm::{
@@ -174,6 +177,10 @@ enum Effect {
     Login(String),
     Launch(bool),
     Repair,
+    EnvRefresh,
+    EnvApply,
+    EnvDoctor,
+    EnvBack,
 }
 struct App {
     session: Session,
@@ -189,6 +196,9 @@ struct App {
     error: bool,
     type_picker: bool,
     login: Option<LoginPrompt>,
+    environment: environment::Page,
+    environment_open: bool,
+    quit_after_environment: bool,
 }
 struct LoginPrompt {
     id: String,
@@ -198,7 +208,7 @@ struct LoginPrompt {
     route: std::result::Result<acs_core::oauth::LoginRoute, String>,
 }
 impl App {
-    fn new(store: Store, agent: Agent) -> Result<Self> {
+    fn new(store: Store, agent: Agent, paths: acs_core::environment::Paths) -> Result<Self> {
         let mut app = Self {
             session: Session::open(store)?,
             agent,
@@ -213,6 +223,9 @@ impl App {
             error: false,
             type_picker: false,
             login: None,
+            environment: environment::Page::new(paths),
+            environment_open: false,
+            quit_after_environment: false,
         };
         app.focus_current();
         Ok(app)
@@ -475,7 +488,37 @@ impl App {
             return Effect::None;
         }
         if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.environment.busy() {
+                self.quit_after_environment = true;
+                self.environment.notice =
+                    "已请求退出；当前任务完成后恢复终端并退出，避免中断事务。".into();
+                return Effect::None;
+            }
             return Effect::Quit;
+        }
+        if self.environment_open && !self.help {
+            if k.code == KeyCode::Char('?') {
+                self.help = true;
+                return Effect::None;
+            }
+            if !self.environment.busy() && self.environment.state != environment::State::Confirm {
+                match k.code {
+                    KeyCode::Tab | KeyCode::Right => {
+                        self.environment_open = false;
+                        self.agent = Agent::Codex;
+                        self.focus_current();
+                        return Effect::None;
+                    }
+                    KeyCode::BackTab | KeyCode::Left => {
+                        self.environment_open = false;
+                        self.agent = Agent::Claude;
+                        self.focus_current();
+                        return Effect::None;
+                    }
+                    _ => {}
+                }
+            }
+            return self.environment.key(k);
         }
         if self.help {
             if matches!(
@@ -606,6 +649,10 @@ impl App {
         }
         match k.code {
             KeyCode::Char('q') | KeyCode::Esc => return Effect::Quit,
+            KeyCode::Char('v') | KeyCode::F(3) => {
+                self.environment_open = true;
+                return Effect::EnvRefresh;
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.index = self.index.saturating_sub(1);
                 self.detail_scroll = 0;
@@ -615,6 +662,13 @@ impl App {
                 self.detail_scroll = 0;
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                let forward = matches!(k.code, KeyCode::Right | KeyCode::Tab);
+                if (forward && self.agent == Agent::Claude)
+                    || (!forward && self.agent == Agent::Codex)
+                {
+                    self.environment_open = true;
+                    return Effect::EnvRefresh;
+                }
                 self.agent = if self.agent == Agent::Codex {
                     Agent::Claude
                 } else {
@@ -720,10 +774,19 @@ fn fields_from(f: &Form, o: usize) -> CustomFields {
         proxy_url: f.get(o + 6),
     }
 }
-pub fn menu(store: Store, selected: Option<AgentArg>) -> Result<()> {
-    run_tui(store, selected, None)
+pub fn menu(
+    store: Store,
+    selected: Option<AgentArg>,
+    root: Option<&std::path::Path>,
+) -> Result<()> {
+    run_tui(store, selected, None, root)
 }
-pub fn dispatch(store: Store, action: Action, selected: Option<AgentArg>) -> Result<()> {
+pub fn dispatch(
+    store: Store,
+    action: Action,
+    selected: Option<AgentArg>,
+    root: Option<&std::path::Path>,
+) -> Result<()> {
     let tui = match &action {
         Action::Add {
             agent,
@@ -737,15 +800,25 @@ pub fn dispatch(store: Store, action: Action, selected: Option<AgentArg>) -> Res
         _ => false,
     };
     if tui {
-        run_tui(store, selected, Some(action))
+        run_tui(store, selected, Some(action), root)
     } else {
         execute(store, action, selected)
     }
 }
-fn run_tui(store: Store, selected: Option<AgentArg>, initial: Option<Action>) -> Result<()> {
+fn run_tui(
+    store: Store,
+    selected: Option<AgentArg>,
+    initial: Option<Action>,
+    root: Option<&std::path::Path>,
+) -> Result<()> {
+    let paths = match root {
+        Some(root) => acs_core::environment::Paths::under(root),
+        None => acs_core::environment::Paths::discover()?,
+    };
     let mut app = App::new(
         store.clone(),
         selected.map(Into::into).unwrap_or(Agent::Codex),
+        paths,
     )?;
     match initial {
         Some(Action::Add {
@@ -789,6 +862,18 @@ fn run_tui(store: Store, selected: Option<AgentArg>, initial: Option<Action>) ->
     let mut guard = Some(TerminalGuard::enter()?);
     let mut screen = Screen::new(CrosstermBackend::new(io::stdout()))?;
     loop {
+        if app.environment.poll() && !app.environment.busy() {
+            // Environment apply may update Codex config.toml; refresh account baselines too.
+            if let Err(e) = app.reload() {
+                app.environment
+                    .notice
+                    .push_str(&format!("；账号状态读取失败：{e:#}"));
+                app.result(Err(e), "");
+            }
+        }
+        if app.quit_after_environment && !app.environment.busy() {
+            break;
+        }
         screen.draw(|f| view::draw(f, &app))?;
         if !event::poll(Duration::from_millis(200))? {
             continue;
@@ -803,6 +888,25 @@ fn run_tui(store: Store, selected: Option<AgentArg>, initial: Option<Action>) ->
         };
         match effect {
             Effect::None => {}
+            Effect::EnvBack => {
+                app.environment_open = false;
+            }
+            Effect::EnvRefresh => app.environment.start(
+                environment::Task::Refresh,
+                acs_core::environment::command::SystemRunner,
+            ),
+            Effect::EnvDoctor => app.environment.start(
+                environment::Task::Doctor,
+                acs_core::environment::command::SystemRunner,
+            ),
+            Effect::EnvApply => {
+                if let Some(plan) = app.environment.plan.take() {
+                    app.environment.start(
+                        environment::Task::Apply(plan),
+                        acs_core::environment::command::SystemRunner,
+                    );
+                }
+            }
             Effect::Quit => break,
             Effect::Login(id) => {
                 drop(guard.take());
@@ -874,7 +978,7 @@ fn run_tui(store: Store, selected: Option<AgentArg>, initial: Option<Action>) ->
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
-    fn fixture() -> (tempfile::TempDir, App) {
+    pub(super) fn fixture() -> (tempfile::TempDir, App) {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(Roots::under(dir.path()));
         let mut s = Session::open(store.clone()).unwrap();
@@ -897,14 +1001,19 @@ mod tests {
             );
         }
         s.save(&s.view().revision, &d).unwrap();
-        let mut app = App::new(store, Agent::Codex).unwrap();
+        let mut app = App::new(
+            store,
+            Agent::Codex,
+            acs_core::environment::Paths::under(dir.path()),
+        )
+        .unwrap();
         app.index = 0;
         (dir, app)
     }
     fn key(app: &mut App, c: KeyCode) -> Effect {
         app.key(KeyEvent::new(c, KeyModifiers::NONE))
     }
-    fn grid(app: &App, width: u16, height: u16) -> String {
+    pub(super) fn grid(app: &App, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| view::draw(f, app)).unwrap();
         let b = terminal.backend().buffer();
@@ -1105,7 +1214,12 @@ mod tests {
         keys
     }
     fn state(base: &App, kind: usize, agent: Agent) -> App {
-        let mut app = App::new(base.session.store.clone(), agent).unwrap();
+        let mut app = App::new(
+            base.session.store.clone(),
+            agent,
+            base.environment.paths.clone(),
+        )
+        .unwrap();
         app.session.original = base.session.original.clone();
         app.session.baseline = base.session.baseline.clone();
         app.index = 0;
@@ -1167,6 +1281,7 @@ mod tests {
                 }
             }
             14 => app.help = true,
+            15..=24 => environment_tests::set_state(&mut app, base, kind),
             _ => unreachable!(),
         }
         app
@@ -1179,14 +1294,15 @@ mod tests {
     }
     #[test]
     fn every_supported_key_and_seeded_sequences_in_every_ui_state_keep_safe_cursor_and_render() {
-        let (_dir, mut base) = fixture();
+        let (dir, mut base) = fixture();
+        environment_tests::configure_fixture(&mut base, dir.path());
         // Synthetic route keeps broad state/render tests independent of platform proxy APIs.
         base.session.original.codex.library.official_proxy_url =
             Some("http://proxy.example.test:8080".into());
         let keys = keys();
         let sizes = [(120, 32), (80, 24), (60, 20), (20, 8), (1, 1), (0, 0)];
         for agent in Agent::ALL {
-            for kind in 0..15 {
+            for kind in 0..25 {
                 for (i, key) in keys.iter().enumerate() {
                     let mut app = state(&base, kind, agent);
                     let _ = app.key(*key);

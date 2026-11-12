@@ -11,6 +11,7 @@ struct RootEdit {
     baseline: String,
 }
 pub struct Plan {
+    pub config: LocalConfig,
     pub changes: Vec<String>,
     pub packages: Vec<(AgentPackage, String)>,
     pub profile: String,
@@ -18,9 +19,19 @@ pub struct Plan {
     baselines: Vec<(PathBuf, Option<Vec<u8>>)>,
     roots: Vec<RootEdit>,
     root_baselines: Vec<(PathBuf, String)>,
+    source_baselines: Vec<(PathBuf, String)>,
     state: State,
     workspace: tempfile::TempDir,
 }
+/// Preview inputs changed; callers must show a newly prepared plan and confirm again.
+#[derive(Debug)]
+pub struct StalePlan(pub String);
+impl std::fmt::Display for StalePlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}；请重新读取计划并确认", self.0)
+    }
+}
+impl std::error::Error for StalePlan {}
 impl Plan {
     pub fn has_changes(&self) -> bool {
         !self.changes.is_empty() || self.packages.iter().any(|(p, v)| !p.satisfied(v))
@@ -122,11 +133,22 @@ impl Service<'_> {
             total: 1,
         });
         published::validate(&repo)?;
+        let source_baselines = [
+            repo.root.join("environment.yaml"),
+            repo.root.join("environment.lock"),
+            repo.root.join(&repo.manifest.instructions.global),
+            repo.root.join(&repo.manifest.skills.local),
+            repo.root.join(&repo.manifest.skills.vendor),
+        ]
+        .into_iter()
+        .map(|p| Ok((p.clone(), tree::fingerprint(&p)?)))
+        .collect::<Result<Vec<_>>>()?;
         let instruction = fs::read(repo.root.join(&repo.manifest.instructions.global))?;
         fs::create_dir_all(self.paths.cache().join("builds"))?;
         let workspace = tempfile::tempdir_in(self.paths.cache().join("builds"))?;
         let state = State::load(&self.paths.state())?;
         let mut plan = Plan {
+            config: config.clone(),
             changes: vec![],
             packages: vec![],
             profile: e.profile.clone(),
@@ -134,6 +156,7 @@ impl Service<'_> {
             baselines: vec![],
             roots: vec![],
             root_baselines: vec![],
+            source_baselines,
             state,
             workspace,
         };
@@ -399,34 +422,78 @@ impl Service<'_> {
                 }
             }
         }
+        self.verify_sources(&plan)?;
         Ok(plan)
+    }
+    fn verify_sources(&self, plan: &Plan) -> Result<()> {
+        for (p, baseline) in &plan.source_baselines {
+            if &tree::fingerprint(p)? != baseline {
+                return Err(StalePlan(format!("来源在计划后发生变化：{}", p.display())).into());
+            }
+        }
+        Ok(())
     }
     pub fn apply(&self, plan: &Plan) -> Result<()> {
         self.apply_with_progress(plan, |_| {})
     }
     pub fn apply_with_progress(&self, plan: &Plan, mut notify: impl FnMut(Progress)) -> Result<()> {
         let _lock = self.paths.store().lock()?;
+        notify(Progress {
+            phase: "核对计划基线",
+            completed: 0,
+            total: 1,
+        });
         for (p, b) in &plan.baselines {
             if &storage::read(p)? != b {
-                bail!("配置在计划后发生变化：{}", p.display());
+                return Err(StalePlan(format!("配置在计划后发生变化：{}", p.display())).into());
             }
         }
         for (path, baseline) in &plan.root_baselines {
             if &tree::fingerprint(path)? != baseline {
-                bail!("Skills 在计划后发生变化：{}", path.display());
+                return Err(
+                    StalePlan(format!("Skills 在计划后发生变化：{}", path.display())).into(),
+                );
             }
         }
+        self.verify_sources(plan)?;
+        for (pkg, installed) in &plan.packages {
+            if pkg.installed(self.runner)? != *installed {
+                return Err(
+                    StalePlan(format!("{} 安装版本在计划后发生变化", pkg.agent.label())).into(),
+                );
+            }
+        }
+        notify(Progress {
+            phase: "核对计划基线",
+            completed: 1,
+            total: 1,
+        });
         if !plan.has_changes() {
             return Ok(());
         }
-        for (pkg, installed) in &plan.packages {
+        for (i, (pkg, installed)) in plan.packages.iter().enumerate() {
+            notify(Progress {
+                phase: "核对或安装 Agent",
+                completed: i,
+                total: plan.packages.len(),
+            });
             if !pkg.satisfied(installed) {
                 pkg.install(self.runner)?;
             }
+            notify(Progress {
+                phase: "核对或安装 Agent",
+                completed: i + 1,
+                total: plan.packages.len(),
+            });
         }
         let mut guards = vec![];
         let mut dirs = vec![];
-        for r in &plan.roots {
+        for (i, r) in plan.roots.iter().enumerate() {
+            notify(Progress {
+                phase: "暂存变更 Skills",
+                completed: i,
+                total: plan.roots.len(),
+            });
             let parent = r.path.parent().context("Skills 根无父目录")?;
             fs::create_dir_all(parent)?;
             let guard = tempfile::tempdir_in(parent)?;
@@ -443,6 +510,11 @@ impl Service<'_> {
                 baseline: r.baseline.clone(),
             });
             guards.push(guard);
+            notify(Progress {
+                phase: "暂存变更 Skills",
+                completed: i + 1,
+                total: plan.roots.len(),
+            });
         }
         let mut files = plan.files.clone();
         files.push(Change {

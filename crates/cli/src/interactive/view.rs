@@ -73,6 +73,13 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         f.render_widget(Paragraph::new("窗口过小；请放大。q 退出"), area);
         return;
     }
+    if app.environment_open {
+        environment(f, app);
+        if app.help {
+            environment_help(f, area);
+        }
+        return;
+    }
     let [head, body, keys, status] = Layout::vertical([
         Constraint::Length(if area.width >= 100 { 2 } else { 3 }),
         Constraint::Min(1),
@@ -84,7 +91,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         f,
         Rect { height: 1, ..head },
         format!(
-            "acs {}  ·  配置与状态     * 当前生效   > 高亮查看",
+            "acs {} · 配置与状态 · v 环境   * 当前   > 查看",
             env!("CARGO_PKG_VERSION")
         ),
         accent(),
@@ -173,7 +180,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
     } else if area.width >= 110 {
         "↑↓/jk选择 Tab客户端 Enter当前 e编辑 n新增 c复制 r改名 d删 l登 s启 p代理 /过滤 ?帮助 q退出"
     } else {
-        "↑↓jk Tab切换 Enter当前 · e n c r d l s p / · ?帮助 q退出"
+        "↑↓jk Tab切换 v环境 Enter当前 · e n c r d l s p / · ?帮助 q退出"
     };
     line(f, keys, hint.into(), accent());
     line(
@@ -218,6 +225,113 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         };
         modal(f, area, "确认操作", &text);
     }
+}
+/// Wrap before slicing, so scrolling can reach every character even on narrow terminals.
+pub(super) fn environment_lines(lines: Vec<String>, width: u16) -> Vec<String> {
+    let width = usize::from(width.max(1));
+    let mut out = Vec::new();
+    for line in lines {
+        for part in line.split('\n') {
+            let mut row = String::new();
+            let mut used = 0;
+            for c in part.chars().map(|c| if c.is_control() { ' ' } else { c }) {
+                let cells = c.width().unwrap_or(0);
+                if used + cells > width && !row.is_empty() {
+                    out.push(std::mem::take(&mut row));
+                    used = 0;
+                }
+                row.push(c);
+                used += cells;
+            }
+            out.push(row);
+        }
+    }
+    out
+}
+fn environment(f: &mut Frame, app: &App) {
+    let page = &app.environment;
+    let [head, body, activity, keys] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(1),
+        Constraint::Length(2),
+        Constraint::Length(2),
+    ])
+    .areas(f.area());
+    f.render_widget(
+        Paragraph::new(format!(
+            "acs {} · 环境\nCodex / Claude / [环境] · Tab 切换",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .style(accent()),
+        head,
+    );
+    let block = panel(page.title());
+    let inner = block.inner(body);
+    let lines = environment_lines(page.lines(), inner.width);
+    let limit = lines.len().saturating_sub(inner.height as usize);
+    page.scroll_limit.set(limit);
+    let offset = page.scroll.min(limit);
+    let block = block.title_bottom(format!(
+        "行 {}–{} / {} · ↑↓ PgUp/PgDn Home/End",
+        offset + 1,
+        (offset + inner.height as usize).min(lines.len()),
+        lines.len()
+    ));
+    f.render_widget(block, body);
+    f.render_widget(
+        Paragraph::new(
+            lines
+                .into_iter()
+                .skip(offset)
+                .take(inner.height as usize)
+                .map(Line::raw)
+                .collect::<Vec<_>>(),
+        ),
+        inner,
+    );
+    if page.busy() {
+        let elapsed = page.started.elapsed();
+        let pulse = ["·", "··", "···"][(elapsed.as_millis() / 400 % 3) as usize];
+        let stage = page
+            .progress
+            .as_ref()
+            .map(|p| format!("{} {}/{}", p.phase, p.completed, p.total))
+            .unwrap_or_else(|| "等待外部命令 / 读取环境".into());
+        f.render_widget(
+            Paragraph::new(format!(
+                "{stage} · 已等待 {} 秒 {pulse}\n任务进行中；Ctrl+C 请求完成后退出",
+                elapsed.as_secs()
+            ))
+            .style(accent()),
+            activity,
+        );
+    } else if page.state == environment::State::Confirm {
+        f.render_widget(Paragraph::new("应用上方已展示的计划？y 确认 · n/Esc 取消\n包含 Agent 安装；基线变化将拒绝并重新读取。").style(accent()), activity);
+    } else {
+        f.render_widget(
+            Paragraph::new(if page.state == environment::State::Failed {
+                "失败原因可在正文完整滚动查看；R 重试，d 诊断"
+            } else if page.plan.as_ref().is_some_and(|p| !p.has_changes()) {
+                "环境已同步；R 刷新，d 诊断"
+            } else {
+                "来源、版本与变更均来自核心计划；a 查看应用确认"
+            }),
+            activity,
+        );
+    }
+    let hint = if page.busy() {
+        "↑↓/PgUp/PgDn 滚动 · ? 帮助\nCtrl+C 请求任务完成后退出"
+    } else if page.state == environment::State::Confirm {
+        "y 确认 · n/Esc 取消 · ? 帮助\n↑↓/PgUp/PgDn 滚动 · Home/End"
+    } else {
+        "R 刷新  a 应用  d 诊断  ? 帮助\n↑↓/PgUp/PgDn 滚动 · Esc/q 返回"
+    };
+    f.render_widget(Paragraph::new(hint).style(accent()), keys);
+}
+fn environment_help(f: &mut Frame, area: Rect) {
+    let r = centered(area, 74, 17);
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new("环境页按键\nR / r 重新同步来源、读取安装版本与漂移\na 查看应用确认；y 应用展示的计划；n / Esc 取消\nd 诊断依赖、来源、安装与受管状态\n↑↓ / j k 逐行滚动；PgUp / PgDn 翻页；Home / End\nTab / ←→ 切换账号与环境页；Esc / q 返回账号\n\n加载或应用时仍可滚动与查看帮助。\n阶段计数来自核心，等待时间持续更新。\n事务不能中断；Ctrl+C 请求任务完成后退出。\n计划变化会拒绝旧计划，刷新后需要再次确认。\n\n? / Esc 关闭帮助").wrap(Wrap { trim: false }).block(panel("环境帮助")), r);
 }
 fn list(f: &mut Frame, area: Rect, app: &App) {
     let rows = app.rows();
@@ -677,7 +791,7 @@ pub(super) fn confirmation(f: &mut Frame, title: &str) {
 fn help(f: &mut Frame, area: Rect) {
     let r = centered(area, 76, 22);
     f.render_widget(Clear, r);
-    let help="查看与导航\n↑↓ / j k 选择配置；Tab / ←→ 切换客户端\nPgUp / PgDn 滚动完整详情；/ 过滤；R 重新读取\n\n配置操作（成功即保存）\nEnter 设为当前；e 编辑；n 先选类型再新增；c 复制\nr 改名；d 删除（y 确认）；p 官方代理\nl Codex 登录确认；确认处 p 就地保存代理后登录\ns 显式启动；h 修复 Codex 历史（备份并确认）\n\n表单\n↑↓ / Tab 切换字段；←→ 光标；Home / End\nCtrl+U 清空；F2 / Ctrl+S 保存；Esc 取消\n仅修改过的表单需要确认放弃；确认框 Esc 继续编辑\n\nq / Esc 退出；Ctrl+C 从任意界面退出并恢复终端\n? / Esc 关闭帮助";
+    let help="查看与导航\n↑↓ / j k 选择配置；Tab / ←→ 切换账号与环境\nv / F3 进入环境页\nPgUp / PgDn 滚动完整详情；/ 过滤；R 重新读取\n\n配置操作（成功即保存）\nEnter 设为当前；e 编辑；n 先选类型再新增；c 复制\nr 改名；d 删除（y 确认）；p 官方代理\nl Codex 登录确认；确认处 p 就地保存代理后登录\ns 显式启动；h 修复 Codex 历史（备份并确认）\n\n表单\n↑↓ / Tab 切换字段；←→ 光标；Home / End\nCtrl+U 清空；F2 / Ctrl+S 保存；Esc 取消\n仅修改过的表单需要确认放弃；确认框 Esc 继续编辑\n\nq / Esc 退出；Ctrl+C 从任意界面退出并恢复终端\n? / Esc 关闭帮助";
     f.render_widget(
         Paragraph::new(help)
             .wrap(Wrap { trim: false })

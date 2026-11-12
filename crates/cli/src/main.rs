@@ -346,13 +346,15 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
-    let store = match cli.root {
-        Some(path) => Store::new(Roots::under(&path)),
+    let store = match &cli.root {
+        Some(path) => Store::new(Roots::under(path)),
         None => Store::discover()?,
     };
     let result = match cli.command {
-        None if terminal() => interactive::menu(store.clone(), cli.agent),
-        Some(action) if terminal() => interactive::dispatch(store.clone(), action, cli.agent),
+        None if terminal() => interactive::menu(store.clone(), cli.agent, cli.root.as_deref()),
+        Some(action) if terminal() => {
+            interactive::dispatch(store.clone(), action, cli.agent, cli.root.as_deref())
+        }
         action => execute(store.clone(), action.unwrap_or(Action::Ls), cli.agent),
     };
     if let Err(error) = &result {

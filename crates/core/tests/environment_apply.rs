@@ -610,6 +610,42 @@ fn unchanged_plan_is_invalidated_by_skills_edits_during_confirmation() {
     assert_eq!(before, files(&p));
 }
 #[test]
+fn source_or_installed_version_changes_invalidate_the_displayed_plan_before_any_write() {
+    for source in [
+        "environment.yaml",
+        "environment.lock",
+        "instructions/global.md",
+        "skills/local/example-demo/SKILL.md",
+        "skills/vendor/.ags-snapshot.yaml",
+        "installed-version",
+    ] {
+        let (_d, p, repo, f) = setup();
+        let service = Service {
+            paths: &p,
+            runner: &f,
+        };
+        service.apply(&service.prepare().unwrap()).unwrap();
+        let plan = service.prepare().unwrap();
+        assert_eq!(plan.config, LocalConfig::load(&p.config()).unwrap());
+        if source == "installed-version" {
+            put(
+                &f.root.join("@openai/codex/package.json"),
+                r#"{"version":"1.1.0"}"#,
+            );
+        } else {
+            let path = repo.join(source);
+            let mut text = fs::read_to_string(&path).unwrap();
+            text.push_str("\n# example external change\n");
+            put(&path, &text);
+        }
+        let before = files(&p);
+        let error = service.apply(&plan).unwrap_err();
+        assert!(error.is::<StalePlan>(), "{error:#}");
+        assert_eq!(files(&p), before);
+        assert!(!service.prepare().unwrap().has_changes() || source != "installed-version");
+    }
+}
+#[test]
 fn broken_uninstall_targets_do_not_remove_npm_package() {
     let (_d, p, _repo, f) = setup();
     let s = Service {

@@ -8,7 +8,7 @@ mod doctor;
 mod service;
 pub use doctor::{doctor, Check, DoctorReport};
 mod tree;
-pub use service::{Plan, Service};
+pub use service::{Plan, Service, StalePlan};
 mod migration;
 pub use migration::{import_ags, LegacyPaths, LegacyPlatform};
 mod state;
