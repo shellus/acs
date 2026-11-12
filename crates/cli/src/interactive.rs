@@ -1254,7 +1254,8 @@ import subprocess,sys,termios
 before=termios.tcgetattr(0)
 probe=subprocess.run([sys.argv[1],'--exact','interactive::tests::terminal_panic_probe','--ignored','--nocapture'],timeout=10)
 assert probe.returncode!=0
-assert termios.tcgetattr(0)==before
+after=termios.tcgetattr(0)
+assert after==before,(before,after)
 print('ACS_PANIC_RECOVERY_OK',flush=True)
 '''
 child=subprocess.Popen([sys.executable,'-c',runner,sys.argv[1]],stdin=slave,stdout=slave,stderr=slave,preexec_fn=setup)
