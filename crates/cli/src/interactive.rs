@@ -1255,6 +1255,10 @@ before=termios.tcgetattr(0)
 probe=subprocess.run([sys.argv[1],'--exact','interactive::tests::terminal_panic_probe','--ignored','--nocapture'],timeout=10)
 assert probe.returncode!=0
 after=termios.tcgetattr(0)
+if sys.platform=='darwin':
+ # XNU sets PENDIN when ICANON is restored; it is transient driver state.
+ before[3]&=~termios.PENDIN
+ after[3]&=~termios.PENDIN
 assert after==before,(before,after)
 print('ACS_PANIC_RECOVERY_OK',flush=True)
 '''
