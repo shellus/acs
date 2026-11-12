@@ -157,7 +157,7 @@ fn paths_are_injected_and_root_is_fully_isolated() {
     .unwrap();
     assert_eq!(
         p.destinations(Agent::Claude).0,
-        home.join(".config/claude/CLAUDE.md")
+        Path::new("~/.config/claude/CLAUDE.md").to_path_buf()
     );
     assert_eq!(p.roots.codex, home.join("example-codex"));
     assert_eq!(p.codex_skills, home.join(".agents/skills"));

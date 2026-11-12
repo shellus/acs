@@ -1,4 +1,14 @@
 //! Agent 环境基础；不会在非 env 命令路径探测或调用 git/npm。
+mod agent;
+pub mod command;
+pub use agent::{compare_versions, AgentPackage};
+mod disabled;
+pub use disabled::{split_block, update_disabled};
+mod service;
+mod tree;
+pub use service::{Plan, Service};
+mod migration;
+pub use migration::{import_ags, LegacyPaths, LegacyPlatform};
 mod state;
 pub use state::{AgentState, ManagedMarker, State};
 mod model;
@@ -9,6 +19,7 @@ use crate::{
     Agent, Roots, Store,
 };
 use anyhow::{bail, Context, Result};
+use command::Runner;
 pub use model::*;
 pub use published::{select_units, tree_hash, SkillUnit};
 use serde::{Deserialize, Serialize};
@@ -34,45 +45,20 @@ impl Paths {
     }
     pub fn discover() -> Result<Self> {
         let home = dirs::home_dir().context("无法确定用户主目录")?;
-        Self::resolve(&home, |k| std::env::var_os(k).map(PathBuf::from))
+        Ok(Self {
+            roots: Roots::discover()?,
+            codex_skills: home.join(".agents/skills"),
+        })
     }
     pub fn resolve(home: &Path, env: impl Fn(&str) -> Option<PathBuf>) -> Result<Self> {
-        if home.as_os_str().is_empty() {
-            bail!("用户主目录为空");
-        }
-        let directory = |key, default| match env(key) {
-            Some(p) if !p.as_os_str().is_empty() => {
-                let s = p.to_string_lossy();
-                if s == "~" {
-                    home.to_path_buf()
-                } else if s.starts_with("~/") || s.starts_with("~\\") {
-                    home.join(&s[2..])
-                } else {
-                    p
-                }
-            }
-            _ => home.join(default),
-        };
-        let claude = directory("CLAUDE_CONFIG_DIR", ".claude");
-        let claude_json = if env("CLAUDE_CONFIG_DIR").is_some_and(|p| !p.as_os_str().is_empty()) {
-            claude.join(".claude.json")
-        } else {
-            home.join(".claude.json")
-        };
-        #[cfg(target_os = "windows")]
-        let desktop = "AppData/Local/Claude-3p";
+        #[cfg(windows)]
+        let parent = env("LOCALAPPDATA").unwrap_or_else(|| home.join("AppData/Local"));
         #[cfg(target_os = "macos")]
-        let desktop = "Library/Application Support/Claude-3p";
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        let desktop = ".config/Claude-3p";
+        let parent = home.join("Library/Application Support");
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let parent = env("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
         Ok(Self {
-            roots: Roots {
-                acs: directory("ACS_HOME", ".acs"),
-                codex: directory("CODEX_HOME", ".codex"),
-                claude_json,
-                claude,
-                claude_desktop: directory("ACS_CLAUDE_DESKTOP_DIR", desktop),
-            },
+            roots: Roots::resolve(home, &parent, env)?,
             codex_skills: home.join(".agents/skills"),
         })
     }
@@ -187,23 +173,20 @@ pub fn source_repository(paths: &Paths, source: &str, branch: &str) -> Result<Re
     }
     let digest = format!("{:x}", Sha256::digest(format!("{source}\0{branch}")));
     let checkout = paths.cache().join("environment").join(&digest[..16]);
-    let git = |dir: Option<&Path>, args: &[&std::ffi::OsStr]| -> Result<Vec<u8>> {
-        let mut cmd = std::process::Command::new("git");
-        if let Some(d) = dir {
-            cmd.current_dir(d);
-        }
-        let output = cmd
-            .args(args)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .context("运行 git")?;
-        if !output.status.success() {
-            bail!("git 失败：{}", String::from_utf8_lossy(&output.stderr));
-        }
-        Ok(output.stdout)
+    let git = |dir: Option<&Path>, args: &[&std::ffi::OsStr]| {
+        command::SystemRunner.run(
+            "git",
+            &args.iter().map(|v| v.to_os_string()).collect::<Vec<_>>(),
+            dir,
+        )
     };
-    if !checkout.exists() {
+    if !checkout.join(".git").exists() {
         std::fs::create_dir_all(checkout.parent().unwrap())?;
+        if checkout.exists() {
+            std::fs::remove_dir_all(&checkout)?;
+        }
+        let stage = tempfile::tempdir_in(checkout.parent().unwrap())?;
+        let staged = stage.path().join("checkout");
         git(
             None,
             &[
@@ -211,9 +194,10 @@ pub fn source_repository(paths: &Paths, source: &str, branch: &str) -> Result<Re
                 "--no-checkout".as_ref(),
                 "--".as_ref(),
                 source.as_ref(),
-                checkout.as_os_str(),
+                staged.as_os_str(),
             ],
         )?;
+        std::fs::rename(staged, &checkout)?;
     }
     let remote = git(
         Some(&checkout),

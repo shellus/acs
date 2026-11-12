@@ -509,7 +509,18 @@ fn environment_remote_source_fetch_preserves_saved_config_on_failure() {
     };
     assert!(run("main").status.success());
     let saved = fs::read(local.path().join("acs/environment.yaml")).unwrap();
+    let checkout = fs::read_dir(local.path().join("acs/cache/environment"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::remove_dir_all(&checkout).unwrap();
+    fs::create_dir(&checkout).unwrap();
+    fs::write(checkout.join("example-partial-clone"), "example").unwrap();
     assert!(run("main").status.success());
+    assert!(checkout.join(".git").exists());
+    assert!(!checkout.join("example-partial-clone").exists());
     assert_eq!(
         fs::read(local.path().join("acs/environment.yaml")).unwrap(),
         saved
@@ -519,4 +530,111 @@ fn environment_remote_source_fetch_preserves_saved_config_on_failure() {
         fs::read(local.path().join("acs/environment.yaml")).unwrap(),
         saved
     );
+}
+#[test]
+fn environment_cli_apply_status_and_agent_group_use_isolated_npm() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    let r = repo.path();
+    for (file, text) in [
+        (
+            "environment.yaml",
+            include_str!("../../core/tests/fixtures/environment/environment.yaml"),
+        ),
+        (
+            "environment.lock",
+            include_str!("../../core/tests/fixtures/environment/environment.lock"),
+        ),
+        ("instructions/global.md", "example rules\n"),
+        (
+            "skills/local/example-demo/SKILL.md",
+            "---\nname: example-demo\n---\nexample\n",
+        ),
+        (
+            "skills/vendor/.ags-snapshot.yaml",
+            "version: 1\nsources: {}\nskills: {}\n",
+        ),
+    ] {
+        let path = r.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let shim = dir.path().join("bin");
+    fs::create_dir(&shim).unwrap();
+    #[cfg(windows)] fs::write(shim.join("npm.cmd"),"@echo off\r\nif \"%1\"==\"root\" goto root\r\necho Unexpected global mutation 1>&2\r\nexit /b 91\r\n:root\r\necho %ACS_EXAMPLE_NPM_ROOT%\r\nexit /b 0\r\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let p = shim.join("npm");
+        fs::write(&p,"#!/bin/sh\nif [ \"$1\" = root ]; then printf '%s\\n' \"$ACS_EXAMPLE_NPM_ROOT\"; else exit 91; fi\n").unwrap();
+        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let npm = dir.path().join("npm");
+    for (name, version) in [
+        ("@openai/codex", "1.0.0"),
+        ("@anthropic-ai/claude-code", "2.0.0"),
+    ] {
+        let path = npm.join(name).join("package.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, format!(r#"{{"version":"{version}"}}"#)).unwrap();
+    }
+    let path = std::env::join_paths(std::iter::once(shim).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_acs"))
+            .arg("--root")
+            .arg(dir.path())
+            .args(args)
+            .env("PATH", &path)
+            .env("ACS_EXAMPLE_NPM_ROOT", &npm)
+            .output()
+            .unwrap()
+    };
+    for args in [
+        vec!["env", "source", "set", r.to_str().unwrap()],
+        vec![
+            "env",
+            "configure",
+            "--profile",
+            "default",
+            "--agents",
+            "all",
+        ],
+        vec!["env", "diff"],
+        vec!["agent", "status", "all"],
+        vec!["agent", "install", "all"],
+    ] {
+        let out = run(&args);
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!out.stdout.starts_with(b"{"));
+    }
+    for args in [
+        vec!["env", "apply"],
+        vec!["agent", "uninstall", "codex"],
+        vec!["--agent", "codex", "env", "source", "show"],
+        vec!["--agent", "codex", "agent", "status"],
+    ] {
+        assert_eq!(run(&args).status.code(), Some(2), "{args:?}");
+    }
+    let out = run(&["env", "apply", "--yes"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let config = dir.path().join("codex/config.toml");
+    let before = fs::read(&config).unwrap();
+    let modified = fs::metadata(&config).unwrap().modified().unwrap();
+    let status = run(&["env", "status"]);
+    assert!(status.status.success());
+    assert!(String::from_utf8_lossy(&status.stdout).contains("无漂移"));
+    assert!(run(&["env", "apply", "--yes"]).status.success());
+    assert_eq!(fs::read(&config).unwrap(), before);
+    assert_eq!(fs::metadata(config).unwrap().modified().unwrap(), modified);
 }

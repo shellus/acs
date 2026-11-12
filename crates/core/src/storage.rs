@@ -55,40 +55,47 @@ pub struct Roots {
 impl Roots {
     pub fn discover() -> Result<Self> {
         let home = dirs::home_dir();
-        let acs = std::env::var_os("ACS_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home.as_ref().map(|p| p.join(".acs")))
-            .context("无法确定 ACS 配置目录")?;
-        let codex = std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home.as_ref().map(|p| p.join(".codex")))
-            .context("无法确定 Codex 配置目录")?;
-        let claude_home = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
-        let claude = claude_home
-            .clone()
-            .or_else(|| home.as_ref().map(|p| p.join(".claude")))
-            .context("无法确定 Claude 配置目录")?;
-        // 设置 CLAUDE_CONFIG_DIR 时 Claude Code 把 .claude.json 也放进该目录。
-        let claude_json = match claude_home {
-            Some(dir) => dir.join(".claude.json"),
-            None => home.context("无法确定用户主目录")?.join(".claude.json"),
-        };
-        // 桌面版在 Windows 用 %LOCALAPPDATA%\Claude-3p，macOS 用 Application Support，
-        // Linux 用 XDG 配置目录；MSIX 安装也直接读写这个真实路径。
         #[cfg(target_os = "linux")]
-        let desktop_parent = dirs::config_dir();
+        let desktop = dirs::config_dir();
         #[cfg(not(target_os = "linux"))]
-        let desktop_parent = dirs::data_local_dir();
-        let claude_desktop = std::env::var_os("ACS_CLAUDE_DESKTOP_DIR")
-            .map(PathBuf::from)
-            .or_else(|| desktop_parent.map(|p| p.join("Claude-3p")))
-            .context("无法确定 Claude 桌面版配置目录")?;
+        let desktop = dirs::data_local_dir();
+        Self::resolve_optional(home.as_deref(), desktop.as_deref(), |k| {
+            std::env::var_os(k).map(PathBuf::from)
+        })
+    }
+    /// 保持账号入口语义：变量原样使用，包括空值和字面 ~；未设置才回退。
+    pub fn resolve(
+        home: &Path,
+        desktop: &Path,
+        env: impl Fn(&str) -> Option<PathBuf>,
+    ) -> Result<Self> {
+        if home.as_os_str().is_empty() {
+            bail!("用户主目录为空");
+        }
+        Self::resolve_optional(Some(home), Some(desktop), env)
+    }
+    fn resolve_optional(
+        home: Option<&Path>,
+        desktop: Option<&Path>,
+        env: impl Fn(&str) -> Option<PathBuf>,
+    ) -> Result<Self> {
+        let directory = |key, default| {
+            env(key)
+                .or_else(|| home.map(|p| p.join(default)))
+                .with_context(|| format!("无法确定 {key} 配置目录"))
+        };
+        let claude_home = env("CLAUDE_CONFIG_DIR");
         Ok(Self {
-            acs,
-            codex,
-            claude,
-            claude_json,
-            claude_desktop,
+            acs: directory("ACS_HOME", ".acs")?,
+            codex: directory("CODEX_HOME", ".codex")?,
+            claude: directory("CLAUDE_CONFIG_DIR", ".claude")?,
+            claude_json: match claude_home {
+                Some(p) => p.join(".claude.json"),
+                None => home.context("无法确定用户主目录")?.join(".claude.json"),
+            },
+            claude_desktop: env("ACS_CLAUDE_DESKTOP_DIR")
+                .or_else(|| desktop.map(|p| p.join("Claude-3p")))
+                .context("无法确定 Claude 桌面版配置目录")?,
         })
     }
     /// 测试与 GUI 自动化使用的隔离目录，禁止落到真实用户配置上。

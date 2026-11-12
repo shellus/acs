@@ -86,7 +86,7 @@ pub fn tree_hash(root: &Path) -> Result<String> {
     }
     Ok(format!("{:x}", hash.finalize()))
 }
-fn discover(source: &str, root: &Path) -> Result<Vec<SkillUnit>> {
+pub(super) fn discover(source: &str, root: &Path) -> Result<Vec<SkillUnit>> {
     let mut units = Vec::new();
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;

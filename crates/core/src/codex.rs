@@ -230,7 +230,12 @@ fn capture_official(library: &mut Library, doc: &DocumentMut, credentials: &Valu
 }
 
 pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) -> Result<()> {
-    let mut doc = parse_doc(text(&baseline[CODEX_CONFIG])?)?;
+    let (base, disabled) = crate::environment::split_block(
+        text(&baseline[CODEX_CONFIG])?,
+        crate::environment::DISABLED_BEGIN,
+        crate::environment::DISABLED_END,
+    )?;
+    let mut doc = parse_doc(&base)?;
     validate_conflicts(&doc, draft.mode)?;
     let target = draft.resolve()?;
     let library = &draft.library;
@@ -287,7 +292,14 @@ pub fn apply(after: &mut Snapshot, baseline: &Snapshot, draft: &mut AgentDraft) 
         next_auth = Some(jsonv!({"auth_mode":"apikey","OPENAI_API_KEY":f.api_key}));
     }
     let env = proxy_env(text(&baseline[CODEX_ENV])?, library.proxy(draft.mode))?;
-    after[CODEX_CONFIG] = Some(doc.to_string().into_bytes());
+    let mut rendered = doc.to_string();
+    if let Some(block) = disabled {
+        if !rendered.is_empty() && !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        rendered.push_str(block);
+    }
+    after[CODEX_CONFIG] = Some(rendered.into_bytes());
     after[CODEX_AUTH] = next_auth
         .map(|auth| serde_json::to_vec_pretty(&auth))
         .transpose()?;

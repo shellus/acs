@@ -35,10 +35,11 @@ pub fn apply(changes: &[Change]) -> Result<()> {
     apply_with(changes, storage::write)
 }
 
-fn apply_with(
-    changes: &[Change],
-    mut writer: impl FnMut(&Path, Option<&[u8]>) -> Result<()>,
-) -> Result<()> {
+/// 只读预检，供 npm 等不可回滚操作前排除目标格式及路径错误。
+pub fn preflight(changes: &[Change]) -> Result<()> {
+    prepare(changes).map(|_| ())
+}
+fn prepare(changes: &[Change]) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     let mut seen = HashSet::new();
     for change in changes {
@@ -61,6 +62,14 @@ fn apply_with(
             permissions,
         });
     }
+    Ok(entries)
+}
+
+fn apply_with(
+    changes: &[Change],
+    mut writer: impl FnMut(&Path, Option<&[u8]>) -> Result<()>,
+) -> Result<()> {
+    let entries = prepare(changes)?;
     let mut written: Vec<usize> = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
         if entry.before == entry.change.content {
@@ -102,6 +111,19 @@ fn apply_with(
         written.push(i);
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn apply_failing_at(changes: &[Change], fail: usize) -> Result<()> {
+    let mut index = 0;
+    apply_with(changes, |p, b| {
+        let current = index;
+        index += 1;
+        if current == fail {
+            bail!("example injected file failure");
+        }
+        storage::write(p, b)
+    })
 }
 
 #[cfg(test)]
