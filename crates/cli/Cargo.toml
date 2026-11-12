@@ -13,7 +13,9 @@ acs-core = { path = "../core" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
-inquire = { version = "0.9", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
+rpassword = "7"
 unicode-width = "0.2"
 
 [dev-dependencies]

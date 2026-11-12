@@ -392,6 +392,36 @@ impl CustomFields {
 }
 
 impl Session {
+    /// Preview selected-profile validation without writing or changing the active selection.
+    pub fn profile_hints(&self, agent: Agent, mode: Mode, id: &str) -> Vec<String> {
+        let mut draft = self.original.agent(agent).clone();
+        draft.mode = mode;
+        draft.library.select(mode, id.into());
+        let mut after = self.baseline.clone();
+        let mut hints = Vec::new();
+        let result = match agent {
+            Agent::Codex => codex::apply(&mut after, &self.baseline, &mut draft),
+            Agent::Claude => claude::apply(&mut after, &self.baseline, &mut draft),
+        };
+        if let Err(e) = result {
+            hints.push(format!("{e:#}"));
+        }
+        if agent == Agent::Claude && mode == Mode::Custom {
+            if let Some(p) = draft.library.selected(mode) {
+                let settings = crate::launch::Settings {
+                    agent,
+                    mode,
+                    proxy: String::new(),
+                    roots: self.store.roots.clone(),
+                    model: p.custom_model.clone().unwrap_or_default(),
+                };
+                if let Err(e) = settings.plan("client".into(), true, Vec::new()) {
+                    hints.push(format!("{e:#}"));
+                }
+            }
+        }
+        hints
+    }
     pub fn open(store: Store) -> Result<Self> {
         let baseline = store.snapshot()?;
         let libraries = libraries(&baseline)?;

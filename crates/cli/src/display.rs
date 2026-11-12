@@ -3,8 +3,6 @@ use std::io::{self, IsTerminal};
 use unicode_width::UnicodeWidthStr;
 
 pub struct Row {
-    pub id: String,
-    pub mode: Mode,
     pub cells: Vec<String>,
     pub current: bool,
 }
@@ -50,8 +48,6 @@ pub fn rows(draft: &Draft, only: Option<Agent>) -> Vec<Row> {
                 .filter(|s| !s.is_empty())
                 .unwrap_or("直连");
                 rows.push(Row {
-                    id: p.id.clone(),
-                    mode,
                     current,
                     cells: vec![
                         agent.label().into(),
@@ -133,8 +129,6 @@ mod tests {
     fn aligns_wide_characters_and_sanitizes_controls() {
         assert_eq!(cell("a\x1b\n中"), "a  中");
         let row = |name: &str| Row {
-            id: String::new(),
-            mode: Mode::Official,
             current: false,
             cells: vec![
                 "Codex",

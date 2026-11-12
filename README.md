@@ -36,7 +36,7 @@ Codex 只托管 `model_providers.custom`；手工添加的其他 provider 在保
 
 ## 开发与验证
 
-终端运行 `acs` 进入配置列表与操作菜单，可独立完成增改、切换、Codex 官方登录和显式启动。管道或重定向下无参仍输出列表。脚本可使用 `acs login <配置 ID 或名称>`，从标准输入读一行完整回调 URL；地址与 state 校验通过且换 token 成功后才保存并设为当前。详见[CLI 用法](docs/features/usage.md#cli)。
+终端运行 `acs` 进入全屏 TUI：两个客户端的活动配置始终可见，配置列表与完整详情并列，直接按键增改、切换、登录和显式启动；窄终端改为单栏。OAuth 临时退出全屏，输出可完整复制的授权链接。管道或重定向下无参仍输出列表，脚本可使用 `acs login <配置>`。跨机器可用 `export-custom` / `import-custom` 迁移自定义 API，导入不改动目标机器的活动配置。详见[CLI 用法](docs/features/usage.md#cli)。
 
 需要 Rust stable、Node.js 24；Windows 构建需要 MSVC C++ 构建工具和 Windows SDK，macOS 构建需要 Xcode Command Line Tools。
 

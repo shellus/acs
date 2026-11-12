@@ -44,17 +44,26 @@ Codex 桌面版在自定义 API 模式直连时阻断 Electron 外壳的 OpenAI 
 
 ## CLI
 
-修改命令会保存，但不自动启动；只有显式菜单启动操作或 `run` 会启动客户端。`--agent` 是全局参数，`ls` 和配置选择器用它过滤，`run` 和 `proxy` 用它选客户端（默认 Codex）。
+修改命令会保存，但不自动启动；只有全屏界面的 `s` 或 `run` 会启动客户端。`--agent` 是全局参数，`ls` 用它过滤，TUI 用它选择初始客户端，`run` 和 `proxy` 用它选客户端（默认 Codex）。
 
-### 交互菜单
+### 全屏 TUI
 
-stdin 和 stdout 都是终端时，直接运行 `acs` 进入提示式菜单；任一被管道或重定向时，无参仍输出 `ls`。列表按终端字符宽度对齐，每行显示客户端、当前标记、完整 ID、名称、类型、地址或账号摘要、模型和代理。终端 `ls` 将当前项着色，设置 `NO_COLOR` 禁用颜色。
+stdin 和 stdout 都是终端时，直接运行 `acs` 进入备用屏幕的全屏 TUI；任一被管道或重定向时，无参仍输出 `ls`。顶栏显示版本及 Codex、Claude 各自当前模式与配置名；左栏按官方账号 / 自定义 API 分组，`*` 标记活动配置，`>` 和高亮标记仅供查看的选择。右栏即时显示全部字段、登录状态、代理与核心校验提示；`PgUp/PgDn` 可查看完整长值与 custom 快照。低于 80 列时列表与详情上下排列，表单占满正文，不横向折行列表。窗口尺寸变化即时重排。`NO_COLOR` 禁用颜色，文本标记与反显仍能区分状态。
 
-主菜单的配置列表兼作状态视图，下面提供新增、启动 Codex、启动 Claude、官方代理、修复历史和退出。选择配置后可设为当前、设为当前并启动、编辑、改名、复制、删除；Codex 官方账号另有登录。官方账号复制只新建未登录条目，不复制令牌。Esc 返回上一级，主菜单 Esc 退出。输入名称或摘要可筛选列表。
+| 按键 | 操作 |
+| --- | --- |
+| ↑↓ / j k | 移动高亮配置，不落盘 |
+| ←→ / Tab | 切换客户端 |
+| Enter | 设为当前并立即保存，不启动 |
+| e / n / c / r | 编辑 / 新增 / 复制 / 改名 |
+| d / l / s / p | 删除 / Codex 官方登录 / 显式启动 / 官方代理 |
+| / / ? / R | 过滤 / 帮助 / 重新读取 |
+| h | 确认后备份并修复 Codex 历史，显示真实进度 |
+| q / Esc / Ctrl+C | 退出并恢复终端；表单中 Esc 取消编辑 |
 
-新增向导依次选择客户端、类型、名称，自定义 API 进入字段菜单；Codex 官方账号保存后可选择立即登录。自定义 API 逐项修改后显式保存或放弃；保存失败展示核心错误并保留已填内容。API Key 的表单摘要与 GUI 一样显示原值，重新输入使用隐藏提示，Esc 保留原值。菜单操作与子命令共用保存操作，菜单间不保留草稿。
+编辑与新增在详情区就地显示表单，↑↓ / Tab 移动字段，直接输入，←→ 移动光标，Home/End 到首尾，Ctrl+U 清空字段；新增表单第一项用 ←→ 选择类型。F2 或 Ctrl+S 保存，Esc 取消。仅确实改过的表单取消时询问放弃，确认框 Esc 返回继续编辑，再按 Esc、y 可放弃；未修改则直接关闭表单。校验失败显示核心错误并保留内容。API Key 与 GUI 一样明文显示。动作成功即保存，无跨动作草稿；官方账号复制只创建未登录条目，不复制令牌。删除与历史修复均需在界面内按 y 明确确认。
 
-`use`、`edit`、`rm` 缺少目标及 `add` 缺少参数时，终端下进入选择器或向导；非终端下报用法错误。终端中 `edit <配置>` 不带字段进入编辑表单。启动菜单选择 CLI 或桌面版；Linux 只显示 CLI。启动 CLI 后 acs 使用客户端的退出码退出。
+`use`、`edit`、`rm` 缺少目标及 `add` 缺少参数时，终端下统一打开全屏界面并提示相应按键；`add` 直接打开新增表单，`edit <配置>` 不带字段时定位该配置并打开表单。非终端下缺参数仍报用法错误。启动按 1 / Enter 选择 CLI，Windows/macOS 可按 2 启动桌面版，Linux 不显示桌面版。客户端启动成功后退出 TUI，CLI 使用子进程退出码；失败回到界面显示错误。
 
 ### 子命令与远程登录
 
@@ -73,7 +82,7 @@ acs add claude custom "example Claude" --url https://claude.example.com --key ex
 acs add codex custom "example copy" --copy example-api
 ```
 
-`--key` 会把 Key 写进 shell 历史与进程列表；日常可在交互菜单中隐藏输入，或在 GUI 里填写。
+`--key` 会把 Key 写进 shell 历史与进程列表；日常可在 TUI 表单或 GUI 中填写。
 
 ```sh
 acs add codex official "example account"
@@ -82,7 +91,7 @@ acs login "example account"
 
 `login` 只支持 Codex 官方账号。它打印本次 PKCE 授权链接；在任意能访问 OpenAI 的浏览器打开并完成登录，跳转到 `http://localhost:1455/auth/callback` 后，即使页面打不开，也可复制地址栏的完整 URL 回终端。acs 不监听本地端口、不需要 SSH 转发。终端粘贴隐藏输入；非交互调用从 stdin 读取一行，便于外部程序通过管道传入。不要把实际回调 URL 放入命令参数、shell 历史或日志。
 
-每次登录的 state 和 PKCE verifier 独立生成，只驻留内存。acs 校验回调地址、唯一参数及 state 后换取 token，使用该客户端保存的官方 HTTP 代理（未设置则遵循进程网络代理）。成功后保存 `auth.json` 和配置库，并将该配置设为 Codex 当前官方账号；不启动客户端。地址错误、state 不匹配、授权拒绝、网络失败、无效 token 或配置外部变化均报错，失败不保存半份凭据。回调 code 和 token 不写常规日志。后续 token 刷新仍由 Codex 负责。
+TUI 登录时会临时离开全屏，授权链接以独占一行的纯文本输出，完成或失败后回到界面。每次登录的 state 和 PKCE verifier 独立生成，只驻留内存。acs 校验回调地址、唯一参数及 state 后换取 token，使用该客户端保存的官方 HTTP 代理（未设置则遵循进程网络代理）。成功后保存 `auth.json` 和配置库，并将该配置设为 Codex 当前官方账号；不启动客户端。地址错误、state 不匹配、授权拒绝、网络失败、无效 token 或配置外部变化均报错，失败不保存半份凭据。回调 code 和 token 不写常规日志。后续 token 刷新仍由 Codex 负责。
 
 隔离验证可运行 `acs --root /tmp/example-acs login <配置>`，然后使用 `CODEX_HOME=/tmp/example-acs/codex codex login status` 检查官方客户端是否识别凭据；该命令只检查本地登录状态，不代表已完成联网请求验证。
 
@@ -130,6 +139,16 @@ acs repair --yes
 ```
 
 修复仅将 JSONL `session_meta.payload.model_provider`、SQLite `threads.model_provider` 和存在时的 `local_thread_catalog.model_provider` 改为 `custom`，不修改显示名称或云端对话。不带 `--yes` 时默认取消；确认后先备份，进度来自实际数量。
+
+### 跨机器复制自定义配置
+
+```sh
+acs export-custom /private/example-custom.json
+# 通过受信任文件传输把配置包复制到目标机器
+acs import-custom /private/example-custom.json
+```
+
+配置包包含两个客户端的自定义 API 完整字段和 custom TOML 未知字段，含 Key，不包含官方账号与令牌。导出拒绝覆盖已有文件。导入只写 acs 配置库，不改动 `config.toml`、`auth.json`、`.env`、Claude 设置或桌面配置；既有模式保持。若当前活动配置与迁入项完整匹配，选中该条；否则另存“原有生效配置”并选中。相同内容重复导入不增加条目，ID 冲突分配新 ID；导入不按名称覆盖条目。代理值保留，是否在目标机器可用需自行核对。实际迁移前备份目标文件，迁移后核对活动文件字节及客户端请求；含 Key 的传输临时文件用完删除。
 
 ## 从 2.x 升级
 
