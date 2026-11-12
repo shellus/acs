@@ -1240,8 +1240,10 @@ mod tests {
     #[cfg(unix)]
     fn panic_restores_real_pty_before_printing_the_panic() {
         let script = r#"
-import os,pty,termios,fcntl,subprocess,select,time,sys
+import os,pty,termios,fcntl,subprocess,select,time,sys,signal
+signal.alarm(25)
 master,slave=pty.openpty()
+os.set_blocking(master,False)
 before=termios.tcgetattr(slave)
 def setup():
  os.setsid()
@@ -1251,12 +1253,18 @@ out=b''
 deadline=time.monotonic()+15
 while time.monotonic()<deadline:
  if select.select([master],[],[],.1)[0]:
-  try: out+=os.read(master,65536)
+  try: chunk=os.read(master,65536)
+  except BlockingIOError: continue
   except OSError: break
+  if not chunk: break
+  out+=chunk
  if child.poll() is not None:
-  while select.select([master],[],[],.1)[0]:
-   try: out+=os.read(master,65536)
+  drain_until=time.monotonic()+1
+  while time.monotonic()<drain_until and select.select([master],[],[],.1)[0]:
+   try: chunk=os.read(master,65536)
    except OSError: break
+   if not chunk: break
+   out+=chunk
   break
 child.wait(timeout=5)
 assert child.returncode!=0
