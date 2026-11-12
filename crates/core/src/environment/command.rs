@@ -10,7 +10,12 @@ impl Runner for SystemRunner {
         #[cfg(windows)]
         let program = if program == "npm" { "npm.cmd" } else { program };
         let mut command = std::process::Command::new(program);
-        command.args(args).env("GIT_TERMINAL_PROMPT", "0");
+        command
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "Never")
+            .env("GIT_HTTP_LOW_SPEED_LIMIT", "1")
+            .env("GIT_HTTP_LOW_SPEED_TIME", "60");
         if program.starts_with("npm") && args.first().is_some_and(|a| a == "ci") {
             command.env("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
         }

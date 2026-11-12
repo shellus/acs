@@ -58,23 +58,32 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
           Compress-Archive -LiteralPath target/release/acs-gui.exe -DestinationPath "release/acs-$env:VERSION-windows-x64.zip"
-          Copy-Item target/release/acs.exe "release/acs-cli-$env:VERSION-windows-x64.exe"
+          Copy-Item target/release/acs.exe "release/acs-cli-windows-x64.exe"
           Copy-Item target/release/bundle/nsis/*setup.exe "release/acs-$env:VERSION-windows-x64-setup.exe"
           Expand-Archive "release/acs-$env:VERSION-windows-x64.zip" release/check
           if ((Get-FileHash release/check/acs-gui.exe).Hash -ne (Get-FileHash target/release/acs-gui.exe).Hash) { throw 'ZIP executable mismatch' }
           Remove-Item -LiteralPath release/check/acs-gui.exe
           Remove-Item -LiteralPath release/check
+          foreach ($asset in @(Get-ChildItem release/acs-cli-* -File)) {
+            $sum = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText(($asset.FullName + ".sha256"), "$sum  $($asset.Name)`n", [Text.UTF8Encoding]::new($false))
+          }
       - name: Package Linux
         if: runner.os == 'Linux'
         run: |
           mkdir -p release
           tar -czf "release/acs-cli-$VERSION-linux-x64.tar.gz" -C target/x86_64-unknown-linux-musl/release acs
+          if readelf -l target/x86_64-unknown-linux-musl/release/acs | grep -q INTERP; then exit 1; fi
+          cp target/x86_64-unknown-linux-musl/release/acs release/acs-cli-linux-x64-musl
+          (cd release; for asset in acs-cli-*; do sha256sum "$asset" > "$asset.sha256"; done)
       - name: Package macOS
         if: runner.os == 'macOS'
         run: |
           mkdir -p release
           ditto -c -k --sequesterRsrc --keepParent 'target/release/bundle/macos/acs.app' "release/acs-$VERSION-macos-$(uname -m).zip"
           tar -czf "release/acs-cli-$VERSION-macos-$(uname -m).tar.gz" -C target/release acs
+          cp target/release/acs "release/acs-cli-macos-$(uname -m)"
+          (cd release; for asset in acs-cli-*; do shasum -a 256 "$asset" > "$asset.sha256"; done)
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ runner.os }}-${{ runner.arch }}

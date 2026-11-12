@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fs};
 #[derive(Debug)]
 struct RootEdit {
     path: PathBuf,
-    stage: PathBuf,
+    stage: Option<PathBuf>,
     baseline: String,
 }
 pub struct Plan {
@@ -55,7 +55,7 @@ fn file_change(
             plan.roots.push(RootEdit {
                 baseline: tree::fingerprint(&path)?,
                 path,
-                stage,
+                stage: Some(stage),
             });
             return Ok(());
         }
@@ -63,6 +63,26 @@ fn file_change(
     }
     Ok(())
 }
+fn add_node(plan: &mut Plan, path: PathBuf, source: Option<&Path>) -> Result<()> {
+    let baseline = tree::fingerprint(&path)?;
+    let stage = if let Some(source) = source {
+        let stage = plan
+            .workspace
+            .path()
+            .join(format!("node-{}", plan.roots.len()));
+        tree::copy(source, &stage)?;
+        Some(stage)
+    } else {
+        None
+    };
+    plan.roots.push(RootEdit {
+        path,
+        stage,
+        baseline,
+    });
+    Ok(())
+}
+
 fn payload_hash(root: &Path) -> Result<String> {
     let mut hash = Sha256::new();
     for e in walkdir::WalkDir::new(root)
@@ -81,13 +101,26 @@ fn payload_hash(root: &Path) -> Result<String> {
 }
 impl Service<'_> {
     pub fn prepare(&self) -> Result<Plan> {
+        self.prepare_with_progress(|_| {})
+    }
+    pub fn prepare_with_progress(&self, mut notify: impl FnMut(Progress)) -> Result<Plan> {
         let _lock = self.paths.store().lock()?;
         let config = LocalConfig::load(&self.paths.config())?;
         let e = &config.environment;
         if e.profile.is_empty() || e.agents.is_empty() {
             bail!("请先配置环境 Profile 与 Agent");
         }
+        notify(Progress {
+            phase: "同步环境仓库",
+            completed: 0,
+            total: 1,
+        });
         let repo = source_repository(self.paths, &e.source, &e.branch)?;
+        notify(Progress {
+            phase: "同步环境仓库",
+            completed: 1,
+            total: 1,
+        });
         published::validate(&repo)?;
         let instruction = fs::read(repo.root.join(&repo.manifest.instructions.global))?;
         fs::create_dir_all(self.paths.cache().join("builds"))?;
@@ -166,55 +199,66 @@ impl Service<'_> {
                     managed = s.skills.clone();
                 }
             }
-            let stage = plan
-                .workspace
-                .path()
-                .join(format!("root-{}", agent.label()));
-            if real_dir(&root) {
-                tree::copy(&root, &stage)?;
-            } else {
-                fs::create_dir(&stage)?;
-            }
             let mut desired = BTreeMap::new();
+            let whole_stage = if takeover {
+                let stage = plan
+                    .workspace
+                    .path()
+                    .join(format!("takeover-{}", agent.label()));
+                fs::create_dir(&stage)?;
+                Some(stage)
+            } else {
+                None
+            };
             let mut root_changed = takeover;
-            for unit in selected {
+            let total = selected.len();
+            notify(Progress {
+                phase: "核对 Skills",
+                completed: 0,
+                total,
+            });
+            for (index, unit) in selected.into_iter().enumerate() {
                 let target = root.join(&unit.name);
-                let rendered =
-                    plan.workspace
-                        .path()
-                        .join(format!("render-{}-{}", agent.label(), unit.name));
-                tree::copy(&unit.path, &rendered)?;
-                if rendered.join("package.json").is_file() {
-                    if !rendered.join("package-lock.json").is_file() {
-                        bail!("Node Skill {} 缺少 package-lock.json", unit.name);
-                    }
-                    let reuse = managed
-                        .get(&unit.name)
-                        .is_some_and(|h| tree_hash(&target).is_ok_and(|actual| &actual == h))
-                        && payload_hash(&target).ok() == Some(payload_hash(&unit.path)?);
-                    if reuse {
-                        tree::remove(&rendered)?;
-                        tree::copy(&target, &rendered)?;
-                    } else {
-                        run(
-                            self.runner,
-                            "npm",
-                            &["ci", "--omit=dev", "--no-audit", "--no-fund"],
-                            Some(&rendered),
-                        )?;
-                    }
-                }
-                let wanted = tree_hash(&rendered)?;
-                desired.insert(unit.name.clone(), wanted.clone());
                 let actual = if takeover {
                     None
                 } else {
                     match tree_hash(&target) {
                         Ok(h) => Some(h),
                         Err(_) if fs::symlink_metadata(&target).is_err() => None,
-                        Err(error) => return Err(error),
+                        Err(e) => return Err(e),
                     }
                 };
+                let mut rendered = unit.path.clone();
+                let wanted = if unit.path.join("package.json").is_file() {
+                    if !unit.path.join("package-lock.json").is_file() {
+                        bail!("Node Skill {} 缺少 package-lock.json", unit.name);
+                    }
+                    let reuse = actual
+                        .as_ref()
+                        .is_some_and(|h| managed.get(&unit.name) == Some(h))
+                        && payload_hash(&target).ok() == Some(payload_hash(&unit.path)?);
+                    if reuse {
+                        rendered = target.clone();
+                        actual.clone().unwrap()
+                    } else {
+                        rendered = plan.workspace.path().join(format!(
+                            "render-{}-{}",
+                            agent.label(),
+                            unit.name
+                        ));
+                        tree::copy(&unit.path, &rendered)?;
+                        run(
+                            self.runner,
+                            "npm",
+                            &["ci", "--omit=dev", "--no-audit", "--no-fund"],
+                            Some(&rendered),
+                        )?;
+                        tree_hash(&rendered)?
+                    }
+                } else {
+                    tree_hash(&unit.path)?
+                };
+                desired.insert(unit.name.clone(), wanted.clone());
                 let kind = if takeover {
                     "接管根目录"
                 } else if actual.is_none() {
@@ -230,16 +274,26 @@ impl Service<'_> {
                     root_changed = true;
                     plan.changes
                         .push(format!("{} Skill {}：{kind}", agent.label(), unit.name));
-                    tree::remove(&stage.join(&unit.name))?;
-                    tree::copy(&rendered, &stage.join(&unit.name))?;
+                    if let Some(stage) = &whole_stage {
+                        tree::copy(&rendered, &stage.join(&unit.name))?;
+                    } else {
+                        add_node(&mut plan, target, Some(&rendered))?;
+                    }
                 }
+                notify(Progress {
+                    phase: "核对 Skills",
+                    completed: index + 1,
+                    total,
+                });
             }
             for name in managed.keys() {
                 if !desired.contains_key(name) {
                     root_changed = true;
                     plan.changes
                         .push(format!("{} Skill {name}：移除受管项", agent.label()));
-                    tree::remove(&stage.join(name))?;
+                    if !takeover {
+                        add_node(&mut plan, root.join(name), None)?;
+                    }
                 }
             }
             if root_changed {
@@ -247,12 +301,21 @@ impl Service<'_> {
                     version: 1,
                     skills: desired.clone(),
                 };
-                storage::write(&stage.join(MANAGED_MARKER), Some(&marker.encode()?))?;
-                plan.roots.push(RootEdit {
-                    baseline: root_baseline,
-                    path: root.clone(),
-                    stage,
-                });
+                if let Some(stage) = whole_stage {
+                    storage::write(&stage.join(MANAGED_MARKER), Some(&marker.encode()?))?;
+                    plan.roots.push(RootEdit {
+                        baseline: root_baseline,
+                        path: root.clone(),
+                        stage: Some(stage),
+                    });
+                } else {
+                    file_change(
+                        &mut plan,
+                        root.join(MANAGED_MARKER),
+                        Some(marker.encode()?),
+                        "Skills 受管标记：更新",
+                    )?;
+                }
             }
             let mut retired = vec![];
             if *agent == Agent::Codex {
@@ -284,27 +347,22 @@ impl Service<'_> {
                 if recorded.is_empty() && !old.join(MANAGED_MARKER).exists() {
                     continue;
                 }
-                let retired_baseline = tree::fingerprint(&old)?;
-                let retired_stage = plan
-                    .workspace
-                    .path()
-                    .join(format!("retired-{}", plan.roots.len()));
-                tree::copy(&old, &retired_stage)?;
                 for name in recorded.keys() {
                     if !safe_name(name) {
                         bail!("历史根含不安全 Skill 名");
                     }
-                    tree::remove(&retired_stage.join(name))?;
+                    add_node(&mut plan, old.join(name), None)?;
                 }
-                tree::remove(&retired_stage.join(MANAGED_MARKER))?;
+                file_change(
+                    &mut plan,
+                    old.join(MANAGED_MARKER),
+                    None,
+                    "历史 Skills 受管标记：移除",
+                )?;
                 plan.changes
                     .push(format!("{} 历史 Skills 根：清理受管项", agent.label()));
-                plan.roots.push(RootEdit {
-                    baseline: retired_baseline,
-                    path: old,
-                    stage: retired_stage,
-                });
             }
+
             plan.state.agents.insert(
                 *agent,
                 AgentState {
@@ -334,7 +392,9 @@ impl Service<'_> {
             }
             for f in &plan.baselines {
                 let file = std::path::absolute(&f.0)?;
-                if file.starts_with(&a) && (file != a || r.stage.is_dir()) {
+                if file.starts_with(&a)
+                    && (file != a || r.stage.as_ref().is_some_and(|s| s.is_dir()))
+                {
                     bail!("Skills 根覆盖配置文件，不能安全应用");
                 }
             }
@@ -342,6 +402,9 @@ impl Service<'_> {
         Ok(plan)
     }
     pub fn apply(&self, plan: &Plan) -> Result<()> {
+        self.apply_with_progress(plan, |_| {})
+    }
+    pub fn apply_with_progress(&self, plan: &Plan, mut notify: impl FnMut(Progress)) -> Result<()> {
         let _lock = self.paths.store().lock()?;
         for (p, b) in &plan.baselines {
             if &storage::read(p)? != b {
@@ -367,8 +430,13 @@ impl Service<'_> {
             let parent = r.path.parent().context("Skills 根无父目录")?;
             fs::create_dir_all(parent)?;
             let guard = tempfile::tempdir_in(parent)?;
-            let stage = guard.path().join("replacement");
-            tree::copy(&r.stage, &stage)?;
+            let stage = if let Some(source) = &r.stage {
+                let dest = guard.path().join("replacement");
+                tree::copy(source, &dest)?;
+                Some(dest)
+            } else {
+                None
+            };
             dirs.push(tree::DirectoryChange {
                 path: r.path.clone(),
                 stage,
@@ -381,7 +449,18 @@ impl Service<'_> {
             path: self.paths.state(),
             content: Some(plan.state.encode()?),
         });
-        tree::commit(&dirs, &files)
+        notify(Progress {
+            phase: "事务落盘",
+            completed: 0,
+            total: 1,
+        });
+        tree::commit(&dirs, &files)?;
+        notify(Progress {
+            phase: "事务落盘",
+            completed: 1,
+            total: 1,
+        });
+        Ok(())
     }
     pub fn repository(&self) -> Result<Repository> {
         let c = LocalConfig::load(&self.paths.config())?;
@@ -435,7 +514,6 @@ impl Service<'_> {
         let mut state = State::load(&self.paths.state())?;
         let mut files = vec![];
         let mut dirs = vec![];
-        let mut guards = vec![];
         let configured = LocalConfig::load(&self.paths.config())?;
         let repository = if configured.environment.source.is_empty() {
             None
@@ -467,21 +545,20 @@ impl Service<'_> {
                 if marker.skills.is_empty() && !r.join(MANAGED_MARKER).exists() {
                     continue;
                 }
-                let parent = r.parent().unwrap();
-                let guard = tempfile::tempdir_in(parent)?;
-                let stage = guard.path().join("replacement");
-                tree::copy(&r, &stage)?;
                 for name in marker.skills.keys() {
-                    tree::remove(&stage.join(name))?;
+                    let path = r.join(name);
+                    dirs.push(tree::DirectoryChange {
+                        baseline: tree::fingerprint(&path)?,
+                        path,
+                        stage: None,
+                    });
                 }
-                tree::remove(&stage.join(MANAGED_MARKER))?;
-                dirs.push(tree::DirectoryChange {
-                    baseline: tree::fingerprint(&r)?,
-                    path: r,
-                    stage,
+                files.push(Change {
+                    path: r.join(MANAGED_MARKER),
+                    content: None,
                 });
-                guards.push(guard);
             }
+
             if state.agents.remove(agent).is_some() {
                 files.push(Change {
                     path: guidance,

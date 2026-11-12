@@ -33,6 +33,9 @@ impl Runner for Fake {
         self.calls
             .borrow_mut()
             .push(std::iter::once(program.into()).chain(a.clone()).collect());
+        if a.first().is_some_and(|s| s == "--version") {
+            return Ok(b"example version 1.0.0".to_vec());
+        }
         if program == "git" {
             bail!("example local repository");
         }
@@ -623,4 +626,178 @@ fn broken_uninstall_targets_do_not_remove_npm_package() {
         .borrow()
         .iter()
         .any(|a| a.get(1).is_some_and(|s| s == "uninstall")));
+}
+#[cfg(windows)]
+#[test]
+#[ignore = "subprocess-only working-directory occupancy probe"]
+fn occupied_directory_probe() {
+    use std::io::{self, Write};
+    let path = std::env::var_os("ACS_EXAMPLE_OCCUPIED_PATH").unwrap();
+    std::env::set_current_dir(path).unwrap();
+    println!("example-cwd-ready");
+    io::stdout().flush().unwrap();
+    let mut text = String::new();
+    io::stdin().read_line(&mut text).unwrap();
+}
+#[cfg(windows)]
+struct Occupied(std::process::Child);
+#[cfg(windows)]
+impl Drop for Occupied {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+#[cfg(windows)]
+fn occupy(path: &Path) -> Occupied {
+    use std::{
+        io::{BufRead, BufReader},
+        process::{Command, Stdio},
+    };
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "occupied_directory_probe",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("ACS_EXAMPLE_OCCUPIED_PATH", path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    loop {
+        assert!(
+            reader.read_line(&mut line).unwrap() > 0,
+            "occupancy child exited"
+        );
+        if line.contains("example-cwd-ready") {
+            break;
+        }
+        line.clear();
+    }
+    Occupied(child)
+}
+#[cfg(windows)]
+#[test]
+fn unrelated_occupied_skill_does_not_block_apply_and_occupied_changed_skill_rolls_back() {
+    let (_d, p, repo, f) = setup();
+    for name in ["example-before", "example-extra"] {
+        put(
+            &repo.join(format!("skills/local/{name}/SKILL.md")),
+            &format!("---\nname: {name}\n---\nexample old\n"),
+        );
+    }
+    let s = Service {
+        paths: &p,
+        runner: &f,
+    };
+    s.apply(&s.prepare().unwrap()).unwrap();
+    let extra = p.codex_skills.join("example-extra");
+    let original = fs::metadata(&extra).unwrap().created().unwrap();
+    let busy = occupy(&extra);
+    put(
+        &repo.join("skills/local/example-demo/SKILL.md"),
+        "---\nname: example-demo\n---\nexample update\n",
+    );
+    let plan = s.prepare().unwrap();
+    s.apply(&plan).unwrap();
+    assert_eq!(fs::metadata(&extra).unwrap().created().unwrap(), original);
+    drop(busy);
+    put(
+        &repo.join("skills/local/example-before/SKILL.md"),
+        "---\nname: example-before\n---\nexample update\n",
+    );
+    put(
+        &repo.join("skills/local/example-demo/SKILL.md"),
+        "---\nname: example-demo\n---\nexample second update\n",
+    );
+    let busy = occupy(&p.codex_skills.join("example-demo"));
+    let plan = s.prepare().unwrap();
+    let before = files(&p);
+    let error = s.apply(&plan).unwrap_err();
+    assert!(
+        error
+            .chain()
+            .filter_map(|e| e.downcast_ref::<std::io::Error>())
+            .any(|e| matches!(e.raw_os_error(), Some(5 | 32))),
+        "{error:#}"
+    );
+    assert_eq!(before, files(&p));
+    drop(busy);
+}
+#[test]
+fn thousand_file_single_skill_benchmark() {
+    let (_d, p, repo, f) = setup();
+    configure(&p, None, Some(vec![Agent::Codex])).unwrap();
+    for i in 0..99 {
+        let skill = repo.join(format!("skills/local/example-{i:03}"));
+        put(
+            &skill.join("SKILL.md"),
+            &format!("---\nname: example-{i:03}\n---\n"),
+        );
+        for n in 0..9 {
+            put(&skill.join(format!("example-{n}.txt")), "example payload\n");
+        }
+    }
+    let s = Service {
+        paths: &p,
+        runner: &f,
+    };
+    s.apply(&s.prepare().unwrap()).unwrap();
+    put(
+        &repo.join("skills/local/example-demo/SKILL.md"),
+        "---\nname: example-demo\n---\nexample changed line\n",
+    );
+    let start = std::time::Instant::now();
+    let plan = s.prepare().unwrap();
+    let status = start.elapsed();
+    let staged_files = walkdir::WalkDir::new(p.cache().join("builds"))
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .count();
+    assert_eq!(
+        staged_files, 1,
+        "single changed Skill must be the only staged payload"
+    );
+
+    let start = std::time::Instant::now();
+    drop(s.prepare().unwrap());
+    let diff = start.elapsed();
+    let start = std::time::Instant::now();
+    s.apply(&plan).unwrap();
+    let apply = start.elapsed();
+    let count = walkdir::WalkDir::new(&p.codex_skills)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .count();
+    println!(
+        "BENCH files={count} status_ms={} diff_ms={} apply_ms={}",
+        status.as_millis(),
+        diff.as_millis(),
+        apply.as_millis()
+    );
+    assert!(!s.prepare().unwrap().has_changes());
+}
+#[test]
+fn doctor_reports_good_environment_and_marker_state_inconsistency() {
+    let (_d, p, _repo, f) = setup();
+    let s = Service {
+        paths: &p,
+        runner: &f,
+    };
+    s.apply(&s.prepare().unwrap()).unwrap();
+    let report = doctor(&p, &f);
+    assert!(report.healthy(), "{:?}", report.checks);
+    fs::remove_file(p.codex_skills.join(MANAGED_MARKER)).unwrap();
+    let report = doctor(&p, &f);
+    assert!(!report.healthy());
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| !c.ok && c.name.contains("标记")));
 }

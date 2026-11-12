@@ -5,7 +5,7 @@ use std::fs;
 #[derive(Debug)]
 pub struct DirectoryChange {
     pub path: PathBuf,
-    pub stage: PathBuf,
+    pub stage: Option<PathBuf>,
     pub baseline: String,
 }
 /// 原字节与链接目标参与并发基线，不跟随目录链接。
@@ -107,13 +107,20 @@ fn commit_with(
             let parent = d.path.parent().context("Skills 目标无父目录")?;
             fs::create_dir_all(parent)?;
             let backup = tempfile::tempdir_in(parent)?;
+            let expected = d
+                .stage
+                .as_ref()
+                .map(|s| fingerprint(s))
+                .transpose()?
+                .unwrap_or_else(|| "absent".into());
             let existed = fs::symlink_metadata(&d.path).is_ok();
             if existed {
                 rename(&d.path, &backup.path().join("original"))?;
             }
-            let expected = fingerprint(&d.stage)?;
             applied.push((d, backup, existed, false, expected));
-            rename(&d.stage, &d.path)?;
+            if let Some(stage) = &d.stage {
+                rename(stage, &d.path)?;
+            }
             applied.last_mut().unwrap().3 = true;
         }
         file_writer(files)
@@ -165,6 +172,47 @@ fn commit_with(
 mod tests {
     use super::*;
     #[test]
+    fn removal_rollback_keeps_external_recreation_and_restores_other_skills() {
+        let d = tempfile::tempdir().unwrap();
+        let first = d.path().join("example-remove");
+        let second = d.path().join("example-update");
+        let stage = d.path().join("stage");
+        for p in [&first, &second, &stage] {
+            fs::create_dir(p).unwrap();
+            storage::write(&p.join("SKILL.md"), Some(b"example old")).unwrap();
+        }
+        storage::write(&stage.join("SKILL.md"), Some(b"example new")).unwrap();
+        let changes = vec![
+            DirectoryChange {
+                baseline: fingerprint(&first).unwrap(),
+                path: first.clone(),
+                stage: None,
+            },
+            DirectoryChange {
+                baseline: fingerprint(&second).unwrap(),
+                path: second.clone(),
+                stage: Some(stage),
+            },
+        ];
+        let error = commit_with(
+            &changes,
+            &[],
+            |a, b| fs::rename(a, b).map_err(Into::into),
+            |_| {
+                fs::create_dir(&first)?;
+                storage::write(&first.join("SKILL.md"), Some(b"example external"))?;
+                bail!("example file failure");
+            },
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("保留外部修改"));
+        assert_eq!(
+            fs::read(first.join("SKILL.md")).unwrap(),
+            b"example external"
+        );
+        assert_eq!(fs::read(second.join("SKILL.md")).unwrap(), b"example old");
+    }
+    #[test]
     fn every_file_failure_restores_files_and_skills_together() {
         for fail in 0..3 {
             let d = tempfile::tempdir().unwrap();
@@ -177,7 +225,7 @@ mod tests {
             let dirs = vec![DirectoryChange {
                 baseline: fingerprint(&root).unwrap(),
                 path: root.clone(),
-                stage,
+                stage: Some(stage),
             }];
             let files: Vec<_> = (0..3)
                 .map(|i| Change {
@@ -215,7 +263,7 @@ mod tests {
         let change = DirectoryChange {
             baseline: fingerprint(&root).unwrap(),
             path: root.clone(),
-            stage,
+            stage: Some(stage),
         };
         assert!(commit_with(
             &[change],
@@ -242,7 +290,7 @@ mod tests {
                 changes.push(DirectoryChange {
                     baseline: fingerprint(&p).unwrap(),
                     path: p,
-                    stage,
+                    stage: Some(stage),
                 });
             }
             let mut n = 0;
@@ -277,7 +325,7 @@ mod tests {
         let change = DirectoryChange {
             baseline: fingerprint(&root).unwrap(),
             path: root.clone(),
-            stage,
+            stage: Some(stage),
         };
         assert!(commit(
             &[change],

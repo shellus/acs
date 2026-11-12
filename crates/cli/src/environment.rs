@@ -22,6 +22,16 @@ pub enum Command {
         #[arg(long)]
         repo: PathBuf,
     },
+    /// 更新 Agent 与上游来源锁定版本
+    Lock {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
+    /// 按锁定来源重新生成 vendor 快照
+    Vendor {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
     /// 计划变更并在确认后应用
     Apply {
         #[arg(long, short)]
@@ -248,6 +258,21 @@ pub fn run(command: Command, root: Option<&Path>) -> Result<()> {
             for message in env::import_ags(&paths, &legacy)? {
                 println!("{message}");
             }
+        }
+        Command::Lock { repo } => {
+            let _lock = paths.store().lock()?;
+            let result = env::update_lock(&repo, &env::command::SystemRunner)?;
+            println!(
+                "environment.lock 已更新：{} 个 Agent、{} 个来源",
+                result.agents.len(),
+                result.sources.len()
+            );
+        }
+        Command::Vendor { repo } => {
+            let snapshot = env::vendor(&paths, &repo, &env::command::SystemRunner, |p| {
+                eprintln!("{} {}/{}", p.phase, p.completed, p.total)
+            })?;
+            println!("已发布 {} 个 vendor Skills", snapshot.skills.len());
         }
         Command::Validate { .. } => unreachable!(),
     }

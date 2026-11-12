@@ -97,6 +97,14 @@ impl ApiFields {
 
 #[derive(Subcommand)]
 enum Action {
+    /// 逐项诊断依赖、环境、Agent 版本及文件漂移
+    Doctor,
+    /// CLI 版本与校验更新（不更新 GUI）
+    #[command(name = "self")]
+    SelfCommand {
+        #[command(subcommand)]
+        command: SelfAction,
+    },
     /// 管理 Agent 的 npm 全局安装；与 --agent 客户端选择参数独立
     Agent {
         #[command(subcommand)]
@@ -170,6 +178,15 @@ enum Action {
         /// 传给客户端自身的参数
         #[arg(last = true)]
         args: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SelfAction {
+    Version,
+    Update {
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 
@@ -260,13 +277,18 @@ fn run() -> Result<()> {
     if cli.agent.is_some()
         && matches!(
             &cli.command,
-            Some(Action::Env { .. } | Action::Agent { .. })
+            Some(
+                Action::Env { .. }
+                    | Action::Agent { .. }
+                    | Action::Doctor
+                    | Action::SelfCommand { .. }
+            )
         )
     {
         Cli::command()
             .error(
                 clap::error::ErrorKind::ArgumentConflict,
-                "env/agent 命令使用自己的 Agent 选择参数，不能同时使用全局 --agent",
+                "env/agent/doctor/self 命令使用自己的选择参数，不能同时使用全局 --agent",
             )
             .exit();
     }
@@ -275,6 +297,54 @@ fn run() -> Result<()> {
     }
     if let Some(Action::Agent { command }) = cli.command {
         return environment::agents(command, cli.root.as_deref());
+    }
+    if let Some(Action::SelfCommand { command }) = cli.command {
+        match command {
+            SelfAction::Version => println!("acs CLI {}", env!("CARGO_PKG_VERSION")),
+            SelfAction::Update { yes } => {
+                if !yes && !terminal() {
+                    Cli::command()
+                        .error(
+                            clap::error::ErrorKind::MissingRequiredArgument,
+                            "非终端自更新必须提供 --yes",
+                        )
+                        .exit();
+                }
+                confirm(yes, "下载、校验并更新 acs CLI？")?;
+                let version = acs_core::self_update::update(
+                    &acs_core::self_update::HttpDownloader::new()?,
+                    acs_core::self_update::RELEASE_API,
+                    &std::env::current_exe()?,
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                )?;
+                println!("CLI 已更新至 {version}");
+            }
+        }
+        return Ok(());
+    }
+    if matches!(cli.command, Some(Action::Doctor)) {
+        let paths = match &cli.root {
+            Some(p) => acs_core::environment::Paths::under(p),
+            None => acs_core::environment::Paths::discover()?,
+        };
+        let report =
+            acs_core::environment::doctor(&paths, &acs_core::environment::command::SystemRunner);
+        for c in &report.checks {
+            println!(
+                "{} {}：{}",
+                if c.ok { "通过" } else { "失败" },
+                c.name,
+                c.detail
+            );
+            if !c.ok {
+                println!("  修复：{}", c.fix);
+            }
+        }
+        if !report.healthy() {
+            bail!("诊断发现需处理的项目");
+        }
+        return Ok(());
     }
     let store = match cli.root {
         Some(path) => Store::new(Roots::under(&path)),
@@ -312,7 +382,9 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
     let revision = session.view().revision;
     let mut draft: Draft = session.original.clone();
     match action {
-        Action::Agent { .. } | Action::Env { .. } => unreachable!("env 在配置会话打开前分发"),
+        Action::Doctor | Action::SelfCommand { .. } | Action::Agent { .. } | Action::Env { .. } => {
+            unreachable!("env 在配置会话打开前分发")
+        }
         Action::ExportCustom { file } => {
             let count = acs_core::transfer::export(session.store.clone(), &file)?;
             println!("已导出 {count} 条自定义配置");

@@ -55,6 +55,25 @@ pub fn select_units(
     }
     Ok(selected)
 }
+/// 与仓库的 vendor 文本及既有哈希约定一致；含 NUL 的二进制保持原字节。
+pub(super) fn portable_bytes(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if bytes.contains(&0) || !bytes.windows(2).any(|w| w == b"\r\n") {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    std::borrow::Cow::Owned(
+        bytes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                if *b == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                    None
+                } else {
+                    Some(*b)
+                }
+            })
+            .collect(),
+    )
+}
 pub fn tree_hash(root: &Path) -> Result<String> {
     let mut hash = Sha256::new();
     // Go WalkDir 按每层文件名排序，不能用所有相对路径的扁平排序替代。
@@ -71,22 +90,28 @@ pub fn tree_hash(root: &Path) -> Result<String> {
         hash.update(relative.as_bytes());
         hash.update([0]);
         let bytes = std::fs::read(entry.path())?;
-        if bytes.contains(&0) {
-            hash.update(bytes);
-        } else {
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
-                    i += 1;
-                }
-                hash.update([bytes[i]]);
-                i += 1;
-            }
-        }
+        hash.update(portable_bytes(&bytes));
     }
     Ok(format!("{:x}", hash.finalize()))
 }
+pub(super) fn discover_source(
+    source: &str,
+    work: &Path,
+    discover: &Discover,
+) -> Result<Vec<SkillUnit>> {
+    let root = work.join(&discover.path);
+    if discover.mode == "single" {
+        if !root.join("SKILL.md").is_file() {
+            bail!("single source {source} 缺少 SKILL.md");
+        }
+        return Ok(vec![make_unit(source, &root)?]);
+    }
+    discover_flat(source, &root)
+}
 pub(super) fn discover(source: &str, root: &Path) -> Result<Vec<SkillUnit>> {
+    discover_flat(source, root)
+}
+fn discover_flat(source: &str, root: &Path) -> Result<Vec<SkillUnit>> {
     let mut units = Vec::new();
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
@@ -97,54 +122,61 @@ pub(super) fn discover(source: &str, root: &Path) -> Result<Vec<SkillUnit>> {
         if !skill.is_file() {
             continue;
         }
-        let content = std::fs::read_to_string(skill)?;
-        let mut front = false;
-        let mut name = entry.file_name().to_string_lossy().into_owned();
-        for line in content.lines().map(str::trim) {
-            if line == "---" {
-                if front {
-                    break;
-                }
-                front = true;
-                continue;
-            }
-            if front {
-                if let Some(n) = line.strip_prefix("name:") {
-                    let n = n.trim().trim_matches(['\"', '\'']);
-                    if !n.is_empty() {
-                        name = n.into();
-                    }
-                    break;
-                }
-            }
-        }
-        if !safe_name(&name) {
-            bail!("不安全 Skill 名 {name:?}");
-        }
-        units.push(SkillUnit {
-            source: source.into(),
-            name,
-            path: entry.path(),
-        });
+        units.push(make_unit(source, &entry.path())?);
     }
     Ok(units)
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Snapshot {
-    version: u32,
-    #[serde(default)]
-    sources: BTreeMap<String, SourceLock>,
-    #[serde(default)]
-    include: Vec<String>,
-    #[serde(default)]
-    skills: BTreeMap<String, SnapshotSkill>,
+fn make_unit(source: &str, path: &Path) -> Result<SkillUnit> {
+    let content = std::fs::read_to_string(path.join("SKILL.md"))?;
+    let mut front = false;
+    let mut name = path
+        .file_name()
+        .context("Skill 无目录名")?
+        .to_string_lossy()
+        .into_owned();
+    for line in content.lines().map(str::trim) {
+        if line == "---" {
+            if front {
+                break;
+            }
+            front = true;
+            continue;
+        }
+        if front {
+            if let Some(n) = line.strip_prefix("name:") {
+                let n = n.trim().trim_matches(['\"', '\'']);
+                if !n.is_empty() {
+                    name = n.into();
+                }
+                break;
+            }
+        }
+    }
+    if !safe_name(&name) {
+        bail!("不安全 Skill 名 {name:?}");
+    }
+    Ok(SkillUnit {
+        source: source.into(),
+        name,
+        path: path.into(),
+    })
 }
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SnapshotSkill {
-    source: String,
-    hash: String,
+pub struct SkillSnapshot {
+    pub version: u32,
+    #[serde(default)]
+    pub sources: BTreeMap<String, SourceLock>,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub skills: BTreeMap<String, SnapshotSkill>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotSkill {
+    pub source: String,
+    pub hash: String,
 }
 pub(super) fn validate(repo: &Repository) -> Result<()> {
     let mut units = discover("local", &repo.root.join(&repo.manifest.skills.local))?;
@@ -156,7 +188,7 @@ pub(super) fn validate(repo: &Repository) -> Result<()> {
         }
     }
     // 发布快照是环境仓库数据格式的一部分，继续读取原有文件名。
-    let snapshot: Snapshot = load_yaml(
+    let snapshot: SkillSnapshot = load_yaml(
         &repo
             .root
             .join(&repo.manifest.skills.vendor)

@@ -4,13 +4,16 @@ pub mod command;
 pub use agent::{compare_versions, AgentPackage};
 mod disabled;
 pub use disabled::{split_block, update_disabled};
+mod doctor;
 mod service;
+pub use doctor::{doctor, Check, DoctorReport};
 mod tree;
 pub use service::{Plan, Service};
 mod migration;
 pub use migration::{import_ags, LegacyPaths, LegacyPlatform};
 mod state;
 pub use state::{AgentState, ManagedMarker, State};
+mod maintenance;
 mod model;
 mod published;
 use crate::{
@@ -20,8 +23,10 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use command::Runner;
+pub use maintenance::{update_lock, vendor, Progress};
 pub use model::*;
 pub use published::{select_units, tree_hash, SkillUnit};
+pub use published::{SkillSnapshot, SnapshotSkill};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,

@@ -5,6 +5,7 @@ pub mod environment;
 pub mod history;
 pub mod launch;
 pub mod oauth;
+pub mod self_update;
 pub mod storage;
 pub mod transaction;
 pub mod transfer;

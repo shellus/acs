@@ -1,4 +1,4 @@
-﻿# Agent 环境管理
+# Agent 环境管理
 
 ## 入口与分层
 
@@ -53,7 +53,7 @@ prepare 同步环境仓库，校验后只消费 skills/local、skills/vendor；�
 
 Codex 使用 `# BEGIN ACS MANAGED CODEX DISABLED SKILLS` / `# END ACS MANAGED CODEX DISABLED SKILLS`，生成排序后的 skills.config 数组，保留其余文本和换行风格；重复、缺失、逆序标记拒绝写入。账号保存先拆出此块，再编辑其余 TOML，最后原样接回；env 只更新块。两条路径共用操作锁和目标基线，旧账号草稿不会覆盖后来 apply 的禁用配置。
 
-apply 校验计划时的配置与 Skills 基线，然后按 pin/minimum 要求安装 Agent；非 pin 不降级，无法解析的已安装版本保留。Skills 在目标同级暂存，通过 rename 保存旧目录实体/链接并替换，之后调用通用文件事务写指令、Codex 配置和状态。失败逆序恢复；外部再次修改的目录不覆盖，并保留备份、报告路径。没有变更时不写目标文件、标记或状态，也不改修改时间。npm 全局安装/卸载不是文件事务的一部分，文件应用失败不会尝试降级或重装 npm 包。
+apply 校验计划时的配置与 Skills 基线，然后按 pin/minimum 要求安装 Agent；非 pin 不降级，无法解析的已安装版本保留。只对新增、更新、移除的单个 Skill 在同级暂存、备份并 rename 替换；未变化的 Skill 和非受管内容不复制、不移动。status/diff 不复制 Skills 根。只有整根接管仍替换目录实体/链接，之后调用通用文件事务写指令、Codex 配置、标记和状态。失败逆序恢复；外部再次修改的目录不覆盖，并保留备份、报告路径。没有变更时不写目标文件、标记或状态，也不改修改时间。npm 全局安装/卸载不是文件事务的一部分，文件应用失败不会尝试降级或重装 npm 包。
 
 uninstall 默认只移除受管内容、对应受管指令和禁用块，保留非受管内容；优先使用已配置仓库的 npm 包名。`--purge` 另行删除选定客户端的整个配置根，属于用户显式选择的清理；npm 操作和 purge 无文件事务回滚保证。
 
@@ -65,8 +65,12 @@ uninstall 默认只移除受管内容、对应受管指令和禁用块，保留�
 
 转换计划完整预检后作为文件事务一起提交，收据最后写入。重复执行相同旧状态只报告已导入；已有 acs 环境配置或状态且无匹配收据时拒绝覆盖。两个品牌的禁用块同时存在、ACS 标记冲突、损坏旧块或异常旧数据均阻止迁移，不留下部分接管。
 
-## 后续链路接口
+## TUI 接入接口
 
-第三段 lock/vendor 可复用 Repository/SourceLock、compare_versions、command::Runner、published::tree_hash 和通用事务。来源缓存自愈集中在 source_repository；后续源缓存建议单独分配 cache/sources，不能将其当作运行时已发布快照。doctor 可以组合 LocalConfig/Repository/State 校验、Service::prepare 和执行器探测；自更新应独立于配置/Skills 事务。
+- `Service::prepare()` / `prepare_with_progress(callback)` 同步来源并生成持有临时工作区的 Plan；可能联网、运行 npm ci 并耗时。应在后台工作线程调用，主线程继续渲染。`Plan::changes` 和 `packages` 用来展示差异与安装计划，`has_changes()` 表示是否需要应用。
+- 确认必须发生在展示完整计划之后，由 TUI 完成；核心 apply 不弹确认。取消时丢弃 Plan，自动清理暂存。确认后消费同一 Plan 调用 `apply_with_progress(&plan, callback)`，不得重新规划后静默应用另一份变化。基线变化时提示重新读取，保留旧视图以便核对。
+- Progress 包含 phase、completed、total。准备阶段先报告来源同步 0/1、1/1，再按当前 Agent 的实际 Skills 数报告计数；计数是当前批次而非全局百分比。事务阶段只报告 0/1 和成功提交后的 1/1，失败不会伪报完成。无中间回调的网络、npm 和单次复制阶段使用等待指示，不用时间估算百分比。
+- `doctor(paths, runner)` 返回逐项 Check 与修复提示；`update_lock`、`vendor`、self_update 的下载器均可独立调用。vendor 另有真实来源数和发布 Skill 数的进度。所有可能联网或调用外部命令的工作应离开 TUI 渲染线程。
+- 普通 apply/uninstall 已采用单 Skill 事务；`tree::DirectoryChange.stage` 的 None 表示移除。整根接管与 vendor 发布仍使用整目录事务。目录预期指纹在移动旧内容前读取；错误回滚继续保留外部修改并留下备份路径。
 
-Plan 持有临时渲染工作区，含人可读 changes、AgentPackage 与已安装版本；apply 必须消费同一计划并复核基线。目录事务当前提供进程内错误回滚，不提供掉电恢复日志。Linux musl 依赖仍由既有 CI 验证；新增能力仅在显式 env/agent 命令下调用系统 git/npm。
+本机文件名与迁移收据格式不变。锁由核心入口持有，TUI 不额外获取同一把锁。当前事务提供进程内错误恢复，不提供掉电恢复日志。CLI 稳定原始资产名、校验和与安装命令见 [维护与分发](../features/cli-maintenance.md)。

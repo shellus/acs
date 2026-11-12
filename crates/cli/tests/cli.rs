@@ -638,3 +638,22 @@ fn environment_cli_apply_status_and_agent_group_use_isolated_npm() {
     assert_eq!(fs::read(&config).unwrap(), before);
     assert_eq!(fs::metadata(config).unwrap().modified().unwrap(), modified);
 }
+#[test]
+fn cli_version_and_update_usage_do_not_read_accounts_or_access_network() {
+    let d = tempfile::tempdir().unwrap();
+    let output = acs(d.path(), &["self", "version"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains(env!("CARGO_PKG_VERSION")));
+    assert!(!d.path().join("acs").exists());
+    assert_eq!(acs(d.path(), &["self", "update"]).status.code(), Some(2));
+    assert!(!d.path().join("acs").exists());
+    let report = Command::new(env!("CARGO_BIN_EXE_acs"))
+        .arg("--root")
+        .arg(d.path())
+        .arg("doctor")
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert_eq!(report.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&report.stdout).contains("修复"));
+}
