@@ -17,6 +17,7 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 crossterm = "0.29"
 rpassword = "7"
 unicode-width = "0.2"
+url = "2"
 
 [dev-dependencies]
 tempfile = "3"

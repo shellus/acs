@@ -364,23 +364,7 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
             if agent != Agent::Codex || mode != Mode::Official {
                 bail!("登录仅支持 Codex 官方账号配置")
             }
-            let login = acs_core::oauth::Login::begin(session.store.clone(), &id)?;
-            println!(
-                "在任意有浏览器的机器打开以下链接并登录：\n{}",
-                login.authorization_url()
-            );
-            eprintln!("跳转 localhost 后页面打不开也可，粘贴地址栏完整回调 URL（输入隐藏）：");
-            io::stdout().flush()?;
-            let callback = if terminal() {
-                interactive::secret("回调 URL")?.context("已取消登录")?
-            } else {
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-                input
-            };
-            login.complete(&callback)?;
-            println!("已保存 Codex 官方登录凭据并设为当前；后续刷新由官方客户端负责");
-            Ok(())
+            login_command(session.store.clone(), &id).map(|_| ())
         }
         Action::Proxy { url } => {
             let agent = selected.map(Into::into).unwrap_or(Agent::Codex);
@@ -421,6 +405,33 @@ fn execute(store: Store, action: Action, selected: Option<AgentArg>) -> Result<(
         }
         Action::Repair { .. } => unreachable!(),
     }
+}
+fn login_command(store: Store, id: &str) -> Result<bool> {
+    let login = acs_core::oauth::Login::begin(store, id)?;
+    println!("{}", login.route().summary());
+    if let Some(warning) = login.route().warning() {
+        eprintln!("{warning}");
+    }
+    println!(
+        "在任意有浏览器的机器打开以下链接并登录：\n{}",
+        login.authorization_url()
+    );
+    eprintln!("跳转 localhost 后页面打不开也可，粘贴地址栏完整回调 URL（输入隐藏，留空取消）：");
+    io::stdout().flush()?;
+    let callback = if terminal() {
+        interactive::secret("回调 URL")?
+    } else {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        Some(input)
+    };
+    let Some(callback) = callback.filter(|s| !s.trim().is_empty()) else {
+        println!("已取消登录；已保存的配置和代理保留");
+        return Ok(false);
+    };
+    login.complete(&callback)?;
+    println!("已保存 Codex 官方登录凭据并设为当前；后续刷新由官方客户端负责");
+    Ok(true)
 }
 fn save(session: &mut Session, revision: &str, draft: &Draft, agent: Agent) -> Result<()> {
     session.save_for(revision, draft, agent)?;

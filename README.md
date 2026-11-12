@@ -38,6 +38,8 @@ Codex 只托管 `model_providers.custom`；手工添加的其他 provider 在保
 
 终端运行 `acs` 进入全屏 TUI：两个客户端的活动配置始终可见，配置列表与完整详情并列，直接按键增改、切换、登录和显式启动；窄终端改为单栏。OAuth 临时退出全屏，输出可完整复制的授权链接。管道或重定向下无参仍输出列表，脚本可使用 `acs login <配置>`。跨机器可用 `export-custom` / `import-custom` 迁移自定义 API，导入不改动目标机器的活动配置。详见[CLI 用法](docs/features/usage.md#cli)。
 
+`n` 先选择“官方账号 / 自定义 API”，官方账号只需名称；新增 Codex 官方账号保存后询问是否立即登录，可在确认处修改并保存官方代理。登录前显示实际换令牌路线，空官方代理沿用环境 / 系统代理，无可用代理才直连；直连可能受地区限制。未登录的 Codex 账号按 `l` 可再次进入登录确认，Claude 官方账号由 Claude 客户端自己登录。
+
 需要 Rust stable、Node.js 24；Windows 构建需要 MSVC C++ 构建工具和 Windows SDK，macOS 构建需要 Xcode Command Line Tools。
 
 ```sh

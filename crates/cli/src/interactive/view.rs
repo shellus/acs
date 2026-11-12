@@ -136,7 +136,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         .areas(body);
         list(f, left, app);
         detail(f, right, app);
-    } else if app.form.is_some() {
+    } else if app.form.is_some() && !app.type_picker {
         detail(f, body, app);
     } else {
         let [list_area, detail_area] = Layout::vertical([
@@ -147,7 +147,15 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         list(f, list_area, app);
         detail(f, detail_area, app);
     }
-    let hint = if app.confirm.is_some() {
+    let hint = if let Some(login) = &app.login {
+        if login.editing {
+            "←→ 光标 · F2 保存代理 · Enter 保存并登录 · Esc 返回确认"
+        } else {
+            "p 修改官方代理 · y/Enter 登录 · n/Esc 稍后"
+        }
+    } else if app.type_picker {
+        "←→/↑↓/Tab 或 1/2 选择类型 · Enter 继续 · Esc 取消"
+    } else if app.confirm.is_some() {
         "y 确认 · n/Esc 取消"
     } else if app.help {
         "Esc/? 关闭帮助"
@@ -155,6 +163,13 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
         "↑↓/Tab 字段 · ←→ 光标 · F2 保存 · Esc 取消 · Ctrl+U 清空"
     } else if app.filtering {
         "/ 过滤输入 · Enter 应用 · Esc 返回"
+    } else if app.agent == Agent::Claude {
+        "Claude官方账号由客户端登录 · ↑↓ Tab Enter e n c r d s p / ? q"
+    } else if app
+        .selected()
+        .is_some_and(|(m, p)| m == Mode::Official && p.official_auth.is_none())
+    {
+        "l 登录/设置代理 · ↑↓ Tab Enter e n c r d s p / ? q"
     } else if area.width >= 110 {
         "↑↓/jk选择 Tab客户端 Enter当前 e编辑 n新增 c复制 r改名 d删 l登 s启 p代理 /过滤 ?帮助 q退出"
     } else {
@@ -177,6 +192,12 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
     );
     if app.help {
         help(f, area);
+    }
+    if app.type_picker {
+        type_picker(f, area, app);
+    }
+    if let Some(login) = &app.login {
+        login_prompt(f, area, app, login);
     }
     if let Some(c) = &app.confirm {
         let text = match c {
@@ -221,10 +242,21 @@ fn list(f: &mut Frame, area: Rect, app: &App) {
             if current { "*" } else { " " },
             p.name.as_deref().unwrap_or("未命名")
         );
-        items.push(ListItem::new(truncate(
-            &s,
-            area.width.saturating_sub(4) as usize,
-        )));
+        let width = area.width.saturating_sub(4) as usize;
+        let secondary = secondary(app, *mode, p);
+        let remaining = width.saturating_sub(s.width() + 3);
+        let spans = if remaining >= 6 && !secondary.is_empty() {
+            vec![
+                Span::raw(s),
+                Span::styled(
+                    format!(" · {}", truncate(&secondary, remaining)),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ]
+        } else {
+            vec![Span::raw(truncate(&s, width))]
+        };
+        items.push(ListItem::new(Line::from(spans)));
     }
     if items.is_empty() {
         items.push(ListItem::new("没有配置；n 新增"));
@@ -240,7 +272,7 @@ fn list(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 fn detail(f: &mut Frame, area: Rect, app: &App) {
-    if let Some(form) = &app.form {
+    if let Some(form) = app.form.as_ref().filter(|_| !app.type_picker) {
         return form_view(f, area, form);
     }
     let Some((mode, p)) = app.selected() else {
@@ -292,8 +324,10 @@ fn detail(f: &mut Frame, area: Rect, app: &App) {
                 "登录状态",
                 if p.official_auth.is_some() {
                     "已保存本地凭据；有效性由官方客户端验证".into()
+                } else if app.agent == Agent::Codex {
+                    "未登录；按 l 打开登录确认，可先设置官方代理".into()
                 } else {
-                    "尚未登录；Codex 可按 l 登录".into()
+                    "未登录；请由 Claude 客户端自行登录（不提供 acs OAuth）".into()
                 },
             ),
             (
@@ -355,7 +389,12 @@ fn detail(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 fn form_view(f: &mut Frame, area: Rect, form: &Form) {
-    let block = panel("编辑表单 · F2 保存 / Esc 取消");
+    let title = if matches!(form.kind, FormKind::New(_)) && form.mode == Mode::Official {
+        "新增官方账号 · 仅名称 · F2 保存 / Esc 取消"
+    } else {
+        "编辑表单 · F2 保存 / Esc 取消"
+    };
+    let block = panel(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let available = inner
@@ -371,51 +410,29 @@ fn form_view(f: &mut Frame, area: Rect, form: &Form) {
         .take(available)
     {
         let y = inner.y + (i - start) as u16;
-        let prefix = format!(
-            "{} {}：",
-            if i == form.focus { ">" } else { " " },
-            input.label
-        );
-        let width = inner.width.saturating_sub(prefix.width() as u16) as usize;
-        let before = &input.value[..input.cursor];
-        let mut from = 0;
-        if i == form.focus {
-            while input.value[from..input.cursor].width() >= width.saturating_sub(1).max(1) {
-                let Some(c) = input.value[from..input.cursor].chars().next() else {
-                    break;
-                };
-                from += c.len_utf8();
-            }
-        }
-        let value = truncate(&input.value[from..], width);
-        f.render_widget(
-            Paragraph::new(format!("{prefix}{value}")).style(if i == form.focus {
-                selected()
-            } else {
-                Style::default()
-            }),
+        input_row(
+            f,
             Rect {
                 x: inner.x,
                 y,
                 width: inner.width,
                 height: 1,
             },
+            input,
+            i == form.focus,
         );
-        if i == form.focus && width > 0 {
-            let x = inner.x + prefix.width() as u16 + before[from..].width() as u16;
-            f.set_cursor_position((x.min(inner.right().saturating_sub(1)), y));
-        }
     }
     if !form.error.is_empty() {
+        let error_height = 4.min(inner.height);
         f.render_widget(
             Paragraph::new(format!("保存失败：{}", form.error))
                 .style(danger())
                 .wrap(Wrap { trim: false }),
             Rect {
                 x: inner.x,
-                y: inner.bottom().saturating_sub(4),
+                y: inner.bottom() - error_height,
                 width: inner.width,
-                height: 4.min(inner.height),
+                height: error_height,
             },
         );
     } else if inner.height > 0 {
@@ -427,10 +444,220 @@ fn form_view(f: &mut Frame, area: Rect, form: &Form) {
                 width: inner.width,
                 height: 1,
             },
-            "直接输入 · 空值允许保存前校验 · API Key 与 GUI 一样明文显示".into(),
+            if matches!(form.kind, FormKind::New(_)) && form.mode == Mode::Official {
+                "仅填写名称；保存后显示该客户端的登录方式"
+            } else {
+                "直接输入 · API Key 与 GUI 一样明文显示"
+            }
+            .into(),
             Style::default(),
         );
     }
+}
+fn input_row(f: &mut Frame, area: Rect, input: &Input, focused: bool) {
+    let cursor = input.position();
+    let prefix = format!("{} {}：", if focused { ">" } else { " " }, input.label);
+    let width = area.width.saturating_sub(prefix.width() as u16) as usize;
+    let before = &input.value[..cursor];
+    let mut from = 0;
+    if focused {
+        while input.value[from..cursor].width() >= width.saturating_sub(1).max(1) {
+            let Some(c) = input.value[from..cursor].chars().next() else {
+                break;
+            };
+            from += c.len_utf8();
+        }
+    }
+    let value = truncate(&input.value[from..], width);
+    f.render_widget(
+        Paragraph::new(format!("{prefix}{value}")).style(if focused {
+            selected()
+        } else {
+            Style::default()
+        }),
+        area,
+    );
+    if focused && width > 0 && area.height > 0 {
+        let x = area.x + prefix.width() as u16 + before[from..].width() as u16;
+        f.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
+    }
+}
+fn secondary(app: &App, mode: Mode, p: &acs_core::config::Profile) -> String {
+    if mode == Mode::Official {
+        return if p.official_auth.is_none() {
+            "未登录".into()
+        } else {
+            p.email
+                .clone()
+                .or(p.account_name.clone())
+                .unwrap_or_else(|| "已保存凭据".into())
+        };
+    }
+    app.session
+        .original
+        .agent(app.agent)
+        .custom_fields
+        .get(&p.id)
+        .map(|f| {
+            url::Url::parse(&f.base_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| f.model.clone())
+        })
+        .unwrap_or_default()
+}
+fn type_picker(f: &mut Frame, area: Rect, app: &App) {
+    let Some(form) = &app.form else {
+        return;
+    };
+    let r = centered(area, 68, 9);
+    f.render_widget(Clear, r);
+    let title = format!("新增 {} · 先选择配置类型", app.agent.label());
+    let block = panel(&title).border_style(accent());
+    let inner = block.inner(r);
+    f.render_widget(block, r);
+    let description = if app.agent == Agent::Codex {
+        "保存后可立即用 OAuth 登录"
+    } else {
+        "由 Claude 客户端自行登录"
+    };
+    for (i, mode) in [Mode::Official, Mode::Custom].into_iter().enumerate() {
+        let active = form.mode == mode;
+        line(
+            f,
+            Rect {
+                x: inner.x,
+                y: inner.y + i as u16 * 2,
+                width: inner.width,
+                height: 1,
+            },
+            format!(
+                "{} [{}] {} {} · {}",
+                if active { ">" } else { " " },
+                i + 1,
+                if active { "●" } else { "○" },
+                mode.label(),
+                if mode == Mode::Official {
+                    description
+                } else {
+                    "填写地址、API Key 和模型"
+                }
+            ),
+            if active { selected() } else { Style::default() },
+        );
+    }
+    if inner.height >= 6 {
+        line(
+            f,
+            Rect {
+                x: inner.x,
+                y: inner.bottom() - 2,
+                width: inner.width,
+                height: 1,
+            },
+            "←→ / ↑↓ / Tab 或 1 / 2 选择；Enter 继续".into(),
+            accent(),
+        );
+        line(
+            f,
+            Rect {
+                x: inner.x,
+                y: inner.bottom() - 1,
+                width: inner.width,
+                height: 1,
+            },
+            "Esc 取消；此处是二选一控件，不是文本输入".into(),
+            Style::default(),
+        );
+    }
+}
+fn login_prompt(f: &mut Frame, area: Rect, app: &App, prompt: &LoginPrompt) {
+    let r = centered(area, 76, 17);
+    f.render_widget(Clear, r);
+    let block = panel("Codex 官方账号 · 是否立即登录？").border_style(accent());
+    let inner = block.inner(r);
+    f.render_widget(block, r);
+    let [route, warning, proxy, error, keys] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(2),
+        Constraint::Min(0),
+        Constraint::Length(2),
+    ])
+    .areas(inner);
+    let account = app
+        .session
+        .original
+        .codex
+        .library
+        .official_accounts
+        .iter()
+        .find(|p| p.id == prompt.id)
+        .and_then(|p| p.name.as_deref())
+        .unwrap_or("官方账号");
+    let official = app
+        .session
+        .original
+        .codex
+        .library
+        .official_proxy_url
+        .as_deref()
+        .unwrap_or_default();
+    match acs_core::oauth::LoginRoute::resolve(official) {
+        Ok(resolved) => {
+            f.render_widget(
+                Paragraph::new(format!("账号：{account}\n{}", resolved.summary()))
+                    .wrap(Wrap { trim: false }),
+                route,
+            );
+            if let Some(text) = resolved.warning() {
+                f.render_widget(
+                    Paragraph::new(text)
+                        .style(danger())
+                        .wrap(Wrap { trim: false }),
+                    warning,
+                );
+            }
+        }
+        Err(e) => {
+            f.render_widget(
+                Paragraph::new(format!("{e:#}"))
+                    .style(danger())
+                    .wrap(Wrap { trim: false }),
+                route,
+            );
+        }
+    }
+    input_row(
+        f,
+        Rect { height: 1, ..proxy },
+        &prompt.proxy,
+        prompt.editing,
+    );
+    f.render_widget(
+        Paragraph::new("留空：继承环境 / 系统代理；若无可用代理则直连").wrap(Wrap { trim: false }),
+        Rect {
+            y: proxy.y + 1,
+            height: 1,
+            ..proxy
+        },
+    );
+    f.render_widget(
+        Paragraph::new(&*prompt.error)
+            .style(danger())
+            .wrap(Wrap { trim: false }),
+        error,
+    );
+    f.render_widget(
+        Paragraph::new(if prompt.editing {
+            "Enter 保存代理并登录 · F2 仅保存\nEsc 放弃代理编辑，返回确认"
+        } else {
+            "p 就地修改官方代理 · y / Enter 登录\nn / Esc 稍后；未登录账号可随时按 l"
+        })
+        .wrap(Wrap { trim: false })
+        .style(accent()),
+        keys,
+    );
 }
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let w = width.min(area.width);
@@ -458,7 +685,7 @@ pub(super) fn confirmation(f: &mut Frame, title: &str) {
 fn help(f: &mut Frame, area: Rect) {
     let r = centered(area, 76, 22);
     f.render_widget(Clear, r);
-    let help="查看与导航\n↑↓ / j k 选择配置；Tab / ←→ 切换客户端\nPgUp / PgDn 滚动完整详情；/ 过滤；R 重新读取\n\n配置操作（成功即保存）\nEnter 设为当前；e 编辑；n 新增；c 复制\nr 改名；d 删除（y 确认）；p 官方代理\nl Codex 官方登录（临时离开全屏，复制完整链接）\ns 显式启动；h 修复 Codex 历史（备份并确认）\n\n表单\n↑↓ / Tab 切换字段；←→ 光标；Home / End\nCtrl+U 清空；F2 / Ctrl+S 保存；Esc 取消\n仅修改过的表单需要确认放弃；确认框 Esc 继续编辑\n\nq / Esc 退出；Ctrl+C 从任意界面退出并恢复终端\n? / Esc 关闭帮助";
+    let help="查看与导航\n↑↓ / j k 选择配置；Tab / ←→ 切换客户端\nPgUp / PgDn 滚动完整详情；/ 过滤；R 重新读取\n\n配置操作（成功即保存）\nEnter 设为当前；e 编辑；n 先选类型再新增；c 复制\nr 改名；d 删除（y 确认）；p 官方代理\nl Codex 登录确认；确认处 p 就地保存代理后登录\ns 显式启动；h 修复 Codex 历史（备份并确认）\n\n表单\n↑↓ / Tab 切换字段；←→ 光标；Home / End\nCtrl+U 清空；F2 / Ctrl+S 保存；Esc 取消\n仅修改过的表单需要确认放弃；确认框 Esc 继续编辑\n\nq / Esc 退出；Ctrl+C 从任意界面退出并恢复终端\n? / Esc 关闭帮助";
     f.render_widget(
         Paragraph::new(help)
             .wrap(Wrap { trim: false })

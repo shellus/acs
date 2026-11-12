@@ -278,8 +278,14 @@ fn pipes_keep_listing_missing_arguments_are_usage_errors_and_invalid_login_never
         .unwrap();
     let result = child.wait_with_output().unwrap();
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stdout)
-        .contains("https://auth.openai.com/oauth/authorize?"));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.find("换令牌代理：").unwrap()
+            < stdout
+                .find("https://auth.openai.com/oauth/authorize?")
+                .unwrap()
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("官方代理未设置"));
     assert!(String::from_utf8_lossy(&result.stderr).contains("state"));
     assert!(!String::from_utf8_lossy(&result.stderr).contains("example-private-code"));
     assert_eq!(store.snapshot().unwrap(), before);

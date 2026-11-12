@@ -2,6 +2,7 @@
 use crate::{Agent, Mode, Session, Store};
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use hyper_util::client::proxy::matcher::Matcher;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -12,12 +13,63 @@ const CLIENT: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REDIRECT: &str = "http://localhost:1455/auth/callback";
 const TOKEN: &str = "https://auth.openai.com/oauth/token";
 
+/// One frozen route used both by the login preview and the token request.
+/// The transport carries proxy credentials privately; summaries never print them.
+pub struct LoginRoute {
+    transport: Option<reqwest::Proxy>,
+    summary: String,
+    official_empty: bool,
+}
+impl LoginRoute {
+    pub fn resolve(official: &str) -> Result<Self> {
+        Self::from_matcher(official, Matcher::from_system())
+    }
+    fn from_matcher(official: &str, matcher: Matcher) -> Result<Self> {
+        let official = crate::config::normalize_proxy(official)?;
+        if !official.is_empty() {
+            return Ok(Self {
+                transport: Some(reqwest::Proxy::all(&official).context("官方代理配置无效")?),
+                summary: format!("换令牌代理：{official}（已保存的 Codex 官方代理）"),
+                official_empty: false,
+            });
+        }
+        if let Some(intercept) = matcher.intercept(&TOKEN.parse().unwrap()) {
+            let uri = intercept.uri().to_string();
+            let mut transport = reqwest::Proxy::all(&uri)
+                .map_err(|_| anyhow::anyhow!("环境或系统代理无效，请设置 Codex 官方代理"))?;
+            if let Some(auth) = intercept.basic_auth() {
+                transport = transport.custom_http_auth(auth.clone());
+            }
+            if let Some((user, password)) = intercept.raw_auth() {
+                transport = transport.basic_auth(user, password);
+            }
+            return Ok(Self {
+                transport: Some(transport),
+                summary: format!("换令牌代理：{uri}（继承环境 / 系统代理）"),
+                official_empty: true,
+            });
+        }
+        Ok(Self {
+            transport: None,
+            summary: "换令牌代理：直连".into(),
+            official_empty: true,
+        })
+    }
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+    pub fn warning(&self) -> Option<&'static str> {
+        self.official_empty.then_some("注意：官方代理未设置，直连可能因地区限制失败；当前实际路线以上方说明为准。可在登录确认按 p 设置代理，或使用 acs proxy --agent codex http://主机:端口。")
+    }
+}
+
 // Intentionally no Debug/Serialize: neither PKCE verifier nor credentials belong in logs.
 pub struct Login {
     session: Session,
     id: String,
     state: String,
     verifier: String,
+    route: LoginRoute,
 }
 
 impl Login {
@@ -33,12 +85,27 @@ impl Login {
         {
             bail!("登录仅支持 Codex 官方账号配置，请先新增或选择该类型配置")
         }
+        let official = session
+            .original
+            .codex
+            .library
+            .official_proxy_url
+            .as_deref()
+            .unwrap_or_default();
+        #[cfg(not(test))]
+        let route = LoginRoute::resolve(official)?;
+        #[cfg(test)]
+        let route = LoginRoute::from_matcher(official, Matcher::builder().build())?;
         Ok(Self {
             session,
             id: id.into(),
             state: random_secret(),
             verifier: random_secret(),
+            route,
         })
+    }
+    pub fn route(&self) -> &LoginRoute {
+        &self.route
     }
 
     pub fn authorization_url(&self) -> String {
@@ -101,25 +168,13 @@ impl Login {
     fn complete_at(mut self, callback: &str, endpoint: &str) -> Result<()> {
         let code = self.code(callback)?;
         self.session.check(&self.session.view().revision)?;
-        let proxy = crate::config::normalize_proxy(
-            self.session
-                .original
-                .codex
-                .library
-                .official_proxy_url
-                .as_deref()
-                .unwrap_or_default(),
-        )?;
         let mut builder = reqwest::blocking::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(60));
-        #[cfg(test)]
-        {
-            builder = builder.no_proxy();
-        }
-        if !proxy.is_empty() {
-            builder = builder.proxy(reqwest::Proxy::all(&proxy).context("官方代理配置无效")?);
+        if let Some(proxy) = self.route.transport {
+            builder = builder.proxy(proxy);
         }
         let client = builder
             .build()
@@ -137,17 +192,19 @@ impl Login {
             .map_err(|_| {
                 anyhow::anyhow!("换取 token 失败：网络连接或代理异常，请检查网络后重新登录")
             })?;
-        if !response.status().is_success() {
+        let status = response.status();
+        let mut bytes = Vec::new();
+        let read = response.take(1024 * 1024 + 1).read_to_end(&mut bytes);
+        if !status.is_success() {
+            if read.is_ok() && bytes.len() <= 1024 * 1024 && unsupported_region(&bytes) {
+                bail!("换取 token 失败（HTTP {}）：OpenAI 不支持当前出口地区。请在登录确认框按 p 设置并保存官方代理；或执行 acs proxy --agent codex http://主机:端口，再重新登录。",status.as_u16())
+            }
             bail!(
                 "换取 token 失败（HTTP {}），授权码可能已失效或已使用，请重新登录",
-                response.status().as_u16()
+                status.as_u16()
             )
         }
-        let mut bytes = Vec::new();
-        response
-            .take(1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| anyhow::anyhow!("读取 token 响应失败，请重新登录"))?;
+        read.map_err(|_| anyhow::anyhow!("读取 token 响应失败，请重新登录"))?;
         if bytes.len() > 1024 * 1024 {
             bail!("token 响应过大，未保存凭据")
         }
@@ -180,6 +237,21 @@ impl Login {
             .save_for(&self.session.view().revision, &draft, Agent::Codex)?;
         Ok(())
     }
+}
+fn unsupported_region(body: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(body).to_ascii_lowercase();
+    [
+        "unsupported_country_region_territory",
+        "country_not_supported",
+        "unsupported_country",
+        "region_not_supported",
+        "unsupported_region",
+        "country, region, or territory not supported",
+        "unsupported country",
+        "region is not supported",
+    ]
+    .iter()
+    .any(|code| text.contains(code))
 }
 
 fn random_secret() -> String {
@@ -241,6 +313,103 @@ mod tests {
     fn valid_response() -> String {
         let payload = URL_SAFE_NO_PAD.encode(br#"{"email":"example@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"example-account"}}"#);
         json!({"id_token":format!("example.{payload}.signature"),"access_token":"example-access","refresh_token":"example-refresh"}).to_string()
+    }
+    #[test]
+    fn route_discovery_describes_direct_environment_no_proxy_and_explicit_override() {
+        let direct = LoginRoute::from_matcher("", Matcher::builder().build()).unwrap();
+        assert_eq!(direct.summary(), "换令牌代理：直连");
+        assert!(direct.warning().unwrap().contains("地区限制"));
+        let inherited = LoginRoute::from_matcher(
+            "",
+            Matcher::builder()
+                .https("http://proxy.example.test:8080")
+                .build(),
+        )
+        .unwrap();
+        assert!(
+            inherited.summary().contains("proxy.example.test:8080")
+                && inherited.summary().contains("继承")
+        );
+        let excluded = LoginRoute::from_matcher(
+            "",
+            Matcher::builder()
+                .https("http://proxy.example.test:8080")
+                .no(".openai.com")
+                .build(),
+        )
+        .unwrap();
+        assert_eq!(excluded.summary(), "换令牌代理：直连");
+        let saved = LoginRoute::from_matcher(
+            "http://official.example.test:8081",
+            Matcher::builder()
+                .https("http://environment.example.test:8080")
+                .no("*")
+                .build(),
+        )
+        .unwrap();
+        assert!(saved.summary().contains("official.example.test:8081"));
+        assert!(saved.warning().is_none());
+        let credentials = LoginRoute::from_matcher(
+            "",
+            Matcher::builder()
+                .https("http://example-user:example-private-password@proxy.example.test:8080")
+                .build(),
+        )
+        .unwrap();
+        assert!(!credentials.summary().contains("example-private-password"));
+    }
+    #[test]
+    fn saved_official_proxy_is_the_actual_token_transport_and_region_errors_are_actionable() {
+        let (_dir, store, id) = fixture();
+        let (proxy, handle) = server(200, valid_response(), |request| {
+            assert!(request.starts_with("POST http://token.example.test/oauth/token HTTP/1.1"));
+            assert!(request.contains("code_verifier="));
+        });
+        let mut s = Session::open(store.clone()).unwrap();
+        let mut draft = s.original.clone();
+        draft.codex.library.official_proxy_url = Some(proxy.trim_end_matches("/token").into());
+        s.save_for(&s.view().revision, &draft, Agent::Codex)
+            .unwrap();
+        let login = Login::begin(store.clone(), &id).unwrap();
+        assert!(login.route().summary().contains("已保存"));
+        let cb = callback(&login);
+        login
+            .complete_at(&cb, "http://token.example.test/oauth/token")
+            .unwrap();
+        handle.join().unwrap();
+        for (body, regional) in [
+            (
+                r#"{"error":{"code":"unsupported_country_region_territory","message":"example-private-response"}}"#,
+                true,
+            ),
+            (
+                r#"{"error":{"code":"invalid_grant","message":"example-private-response"}}"#,
+                false,
+            ),
+        ] {
+            let (proxy, handle) = server(403, body.into(), |_| {});
+            let mut s = Session::open(store.clone()).unwrap();
+            let mut draft = s.original.clone();
+            draft.codex.library.official_proxy_url = Some(proxy.trim_end_matches("/token").into());
+            s.save_for(&s.view().revision, &draft, Agent::Codex)
+                .unwrap();
+            let before = store.snapshot().unwrap();
+            let login = Login::begin(store.clone(), &id).unwrap();
+            let cb = callback(&login);
+            let error = login
+                .complete_at(&cb, "http://token.example.test/oauth/token")
+                .unwrap_err()
+                .to_string();
+            handle.join().unwrap();
+            assert!(!error.contains("example-private-response"));
+            assert_eq!(error.contains("acs proxy --agent codex"), regional);
+            if regional {
+                assert!(error.contains("登录确认框按 p") && error.contains("出口地区"));
+            } else {
+                assert!(error.contains("授权码可能已失效"));
+            }
+            assert_eq!(store.snapshot().unwrap(), before);
+        }
     }
     fn server(
         status: u16,
