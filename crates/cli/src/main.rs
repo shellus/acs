@@ -416,19 +416,14 @@ fn login_command(store: Store, id: &str) -> Result<bool> {
         "在任意有浏览器的机器打开以下链接并登录：\n{}",
         login.authorization_url()
     );
-    eprintln!("跳转 localhost 后页面打不开也可，粘贴地址栏完整回调 URL（输入隐藏，留空取消）：");
+    eprintln!("跳转 localhost 后页面打不开也可，粘贴地址栏完整回调 URL（留空取消）：");
     io::stdout().flush()?;
-    let callback = if terminal() {
-        interactive::secret("回调 URL")?
-    } else {
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        Some(input)
-    };
-    let Some(callback) = callback.filter(|s| !s.trim().is_empty()) else {
+    let mut callback = String::new();
+    io::stdin().read_line(&mut callback)?;
+    if callback.trim().is_empty() {
         println!("已取消登录；已保存的配置和代理保留");
         return Ok(false);
-    };
+    }
     login.complete(&callback)?;
     println!("已保存 Codex 官方登录凭据并设为当前；后续刷新由官方客户端负责");
     Ok(true)

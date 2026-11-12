@@ -36,9 +36,6 @@ impl Drop for TerminalGuard {
         Self::restore();
     }
 }
-pub fn secret(title: &str) -> Result<Option<String>> {
-    Ok(Some(rpassword::prompt_password(format!("{title}: "))?))
-}
 pub fn confirmed(title: &str) -> Result<bool> {
     let _guard = TerminalGuard::enter()?;
     let mut screen = Screen::new(CrosstermBackend::new(io::stdout()))?;

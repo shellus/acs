@@ -15,7 +15,6 @@ serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
-rpassword = "7"
 unicode-width = "0.2"
 url = "2"
 

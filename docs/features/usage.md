@@ -93,7 +93,7 @@ acs add codex official "example account"
 acs login "example account"
 ```
 
-`login` 只支持 Codex 官方账号。它打印本次 PKCE 授权链接；在任意能访问 OpenAI 的浏览器打开并完成登录，跳转到 `http://localhost:1455/auth/callback` 后，即使页面打不开，也可复制地址栏的完整 URL 回终端。acs 不监听本地端口、不需要 SSH 转发。终端粘贴隐藏输入；非交互调用从 stdin 读取一行，便于外部程序通过管道传入。不要把实际回调 URL 放入命令参数、shell 历史或日志。
+`login` 只支持 Codex 官方账号。它打印本次 PKCE 授权链接；在任意能访问 OpenAI 的浏览器打开并完成登录，跳转到 `http://localhost:1455/auth/callback` 后，即使页面打不开，也可复制地址栏的完整 URL 回终端。acs 不监听本地端口、不需要 SSH 转发。终端粘贴的回调 URL 明文回显，便于确认粘贴完整；其中的授权码一次性且短时有效。非交互调用同样从 stdin 读取一行，便于外部程序通过管道传入。不要把实际回调 URL 放入命令参数、shell 历史或日志。
 
 TUI 登录时会临时离开全屏，授权链接以独占一行的纯文本输出，完成、失败或空行取消后回到界面。所有入口（含 `acs login`）先显示实际换令牌代理。优先使用已保存的 Codex 官方 HTTP 代理；为空时保留普通 Codex HTTP 传输的环境 / 系统代理发现行为：识别 `HTTPS_PROXY` / `https_proxy`、`ALL_PROXY` / `all_proxy`，遵守 `NO_PROXY` / `no_proxy`；没有环境代理时可采用平台静态系统代理，无可用代理才直连。`HTTP_PROXY` 单独只用于 HTTP 目标，不代替 HTTPS 代理。NO_PROXY 可令环境路线直连，但显式官方代理优先生效。不读取其他模式的托管代理，也不修改父进程环境或系统代理；需要固定出口时应明确保存官方代理。Codex 专有的 PAC/WPAD 或管理员网络策略不由 acs 导入。
 
