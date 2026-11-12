@@ -198,6 +198,7 @@ struct LoginPrompt {
     proxy: Input,
     editing: bool,
     error: String,
+    route: std::result::Result<acs_core::oauth::LoginRoute, String>,
 }
 impl App {
     fn new(store: Store, agent: Agent) -> Result<Self> {
@@ -317,20 +318,21 @@ impl App {
         Ok(())
     }
     fn ask_login(&mut self, id: String) {
+        let proxy = self
+            .session
+            .original
+            .codex
+            .library
+            .official_proxy_url
+            .clone()
+            .unwrap_or_default();
+        let route = acs_core::oauth::LoginRoute::resolve(&proxy).map_err(|e| format!("{e:#}"));
         self.login = Some(LoginPrompt {
             id,
-            proxy: Input::new(
-                "官方 HTTP 代理",
-                self.session
-                    .original
-                    .codex
-                    .library
-                    .official_proxy_url
-                    .clone()
-                    .unwrap_or_default(),
-            ),
+            proxy: Input::new("官方 HTTP 代理", proxy),
             editing: false,
             error: String::new(),
+            route,
         });
         self.message = "登录前请确认换令牌代理；p 编辑代理，y / Enter 登录，Esc 稍后".into();
         self.error = false;
@@ -356,6 +358,7 @@ impl App {
             .clone()
             .unwrap_or_default();
         let prompt = self.login.as_mut().unwrap();
+        prompt.route = acs_core::oauth::LoginRoute::resolve(&value).map_err(|e| format!("{e:#}"));
         prompt.proxy = Input::new("官方 HTTP 代理", value);
         prompt.editing = false;
         prompt.error.clear();
@@ -1179,7 +1182,10 @@ mod tests {
     }
     #[test]
     fn every_supported_key_and_seeded_sequences_in_every_ui_state_keep_safe_cursor_and_render() {
-        let (_dir, base) = fixture();
+        let (_dir, mut base) = fixture();
+        // Synthetic route keeps broad state/render tests independent of platform proxy APIs.
+        base.session.original.codex.library.official_proxy_url =
+            Some("http://proxy.example.test:8080".into());
         let keys = keys();
         let sizes = [(120, 32), (80, 24), (60, 20), (20, 8), (1, 1), (0, 0)];
         for agent in Agent::ALL {

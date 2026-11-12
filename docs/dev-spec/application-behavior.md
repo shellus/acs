@@ -72,7 +72,7 @@ Claude 桌面版忽略 `settings.json` 的 `ANTHROPIC_BASE_URL`，同一次保�
 
 `oauth::Login` 在开始时读取隔离 Store 和目标 Codex 官方账号，生成随机 state、PKCE verifier 及 S256 challenge。授权使用 Codex 公共 OAuth client、固定 localhost 回调及 OpenAI HTTPS token 端点，不启用监听服务。完成时严格校验 URL、state、唯一 code，再提交带 verifier 的一次性表单请求；禁用 HTTP 重定向，限定网络等待和响应大小，不自动重放 token POST。配置的官方代理优先生效，不修改父进程环境。
 
-LoginRoute 使用 reqwest 同一 hyper-util Matcher 解析并冻结默认传输路线：显式官方代理优先，否则按环境 / 平台静态系统代理发现，并考虑 NO_PROXY；传输构造先关闭重复自动发现，再应用已冻结的 Proxy，保证确认、CLI 输出和真正 token 请求一致。无官方代理保留继承能力并提示地区限制，不假称总是直连。该选择依据 [Codex 普通传输与系统代理策略](https://github.com/openai/codex/blob/main/codex-rs/http-client/src/outbound_proxy.rs) 的默认 HTTP 行为；不复制其可选 PAC/WPAD 或受管理网络策略。地区错误只识别已知地区不支持标记并返回固定操作指引，不输出响应正文；其他 HTTP 错误说明保持原样。本地假代理断言请求的绝对目标 URI 和 PKCE 表单，测试不访问真实 token 端点。
+LoginRoute 使用 reqwest 同一 hyper-util Matcher 解析并冻结默认传输路线：显式官方代理优先，否则按环境 / 平台静态系统代理发现，并考虑 NO_PROXY；传输构造先关闭重复自动发现，再应用已冻结的 Proxy。登录确认只在打开或保存代理时计算预览，重绘不读取系统代理；真正开始登录时重新确认并打印实际冻结路线，显示与 token 请求一致。显式官方代理不触发系统代理发现。无官方代理保留继承能力并提示地区限制，不假称总是直连。该选择依据 [Codex 普通传输与系统代理策略](https://github.com/openai/codex/blob/main/codex-rs/http-client/src/outbound_proxy.rs) 的默认 HTTP 行为；不复制其可选 PAC/WPAD 或受管理网络策略。地区错误只识别已知地区不支持标记并返回固定操作指引，不输出响应正文；其他 HTTP 错误说明保持原样。本地假代理断言请求的绝对目标 URI 和 PKCE 表单，测试不访问真实 token 端点。
 
 成功响应须包含非空 id/access/refresh token 及账号 ID。JWT 仅提取账号摘要，可信边界是 TLS token 端点；凭据写成 Codex 的 `auth_mode=chatgpt`、`tokens`、`last_refresh` 格式。更新目标账号快照、选中项和活动认证仍使用 Session 原基线及 Store 提交/回滚；浏览器流程期间的外部变化也会阻止覆盖。失败响应正文、回调 URL、code 和 token 不进入错误或常规日志，核心对象不实现 Debug/Serialize。端点替换仅为核心私有函数的单元测试调用，正式 CLI 无端点覆盖或测试入口。OAuth 后续刷新由官方客户端负责，GUI 可复用协议逻辑但目前仍由客户端登录。
 

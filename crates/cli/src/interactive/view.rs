@@ -595,15 +595,7 @@ fn login_prompt(f: &mut Frame, area: Rect, app: &App, prompt: &LoginPrompt) {
         .find(|p| p.id == prompt.id)
         .and_then(|p| p.name.as_deref())
         .unwrap_or("官方账号");
-    let official = app
-        .session
-        .original
-        .codex
-        .library
-        .official_proxy_url
-        .as_deref()
-        .unwrap_or_default();
-    match acs_core::oauth::LoginRoute::resolve(official) {
+    match &prompt.route {
         Ok(resolved) => {
             f.render_widget(
                 Paragraph::new(format!("账号：{account}\n{}", resolved.summary()))

@@ -22,7 +22,12 @@ pub struct LoginRoute {
 }
 impl LoginRoute {
     pub fn resolve(official: &str) -> Result<Self> {
-        Self::from_matcher(official, Matcher::from_system())
+        let matcher = if official.trim().is_empty() {
+            Matcher::from_system()
+        } else {
+            Matcher::builder().build()
+        };
+        Self::from_matcher(official, matcher)
     }
     fn from_matcher(official: &str, matcher: Matcher) -> Result<Self> {
         let official = crate::config::normalize_proxy(official)?;
