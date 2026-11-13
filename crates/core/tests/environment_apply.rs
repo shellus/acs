@@ -203,6 +203,45 @@ fn applies_takeover_updates_removals_retirement_and_preserves_unmanaged_content(
     assert!(p.codex_skills.join("personal").exists());
 }
 #[test]
+fn state_recording_legacy_codex_root_retires_it_once() {
+    let (_d, p, _repo, f) = setup();
+    let s = Service {
+        paths: &p,
+        runner: &f,
+    };
+    let legacy = p.roots.codex.join("skills");
+    put(&legacy.join("old-managed/SKILL.md"), "example old");
+    put(&legacy.join("personal/SKILL.md"), "example keep");
+    let skills = BTreeMap::from([("old-managed".into(), "example-hash".into())]);
+    storage::write(
+        &legacy.join(MANAGED_MARKER),
+        Some(
+            &ManagedMarker {
+                version: 1,
+                skills: skills.clone(),
+            }
+            .encode()
+            .unwrap(),
+        ),
+    )
+    .unwrap();
+    let mut state = State::empty();
+    state.agents.insert(
+        Agent::Codex,
+        AgentState {
+            version: "1.0.0".into(),
+            instruction_hash: "example".into(),
+            skills,
+            skills_root: legacy.clone(),
+        },
+    );
+    storage::write(&p.state(), Some(&state.encode().unwrap())).unwrap();
+    s.apply(&s.prepare().unwrap()).unwrap();
+    assert!(!legacy.join("old-managed").exists());
+    assert!(legacy.join("personal").exists());
+    assert!(!s.prepare().unwrap().has_changes());
+}
+#[test]
 fn stale_plan_bad_markers_and_failed_install_never_write_targets() {
     let (_d, p, _repo, f) = setup();
     let s = Service {

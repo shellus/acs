@@ -344,8 +344,11 @@ impl Service<'_> {
             if *agent == Agent::Codex {
                 retired.push(self.paths.roots.codex.join("skills"));
             }
+            // 旧 AGS 状态可能把 Codex 旧默认根记为 skills_root，去重避免同一路径重复登记。
             if let Some(s) = plan.state.agents.get(agent) {
-                retired.push(s.skills_root.clone());
+                if !retired.contains(&s.skills_root) {
+                    retired.push(s.skills_root.clone());
+                }
             }
             for old in retired {
                 if old.as_os_str().is_empty()
