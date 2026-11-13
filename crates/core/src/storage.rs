@@ -191,9 +191,17 @@ impl Store {
             .create(true)
             .truncate(false)
             .open(path)?;
-        file.try_lock_exclusive()
-            .context("另一项保存或修复正在执行，请稍后重试")?;
-        Ok(file)
+        // Unix 上其他线程 fork 子进程会在 exec 前短暂共享该锁，短暂重试避免误报占用。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(file),
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
+                Err(e) => return Err(e).context("另一项保存或修复正在执行，请稍后重试"),
+            }
+        }
     }
     pub fn check(&self, baseline: &Snapshot) -> Result<()> {
         if &self.snapshot()? != baseline {

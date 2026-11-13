@@ -1075,7 +1075,7 @@ mod tests {
         let (_dir, mut app) = fixture();
         for (w, h) in [(120, 32), (80, 24), (60, 20), (20, 8)] {
             let g = grid(&app, w, h);
-            assert!(g.contains("acs 3.0.0"));
+            assert!(g.contains(concat!("acs ", env!("CARGO_PKG_VERSION"))));
             if w >= 60 {
                 assert!(g.contains("Codex") && g.contains("Claude"));
             }
