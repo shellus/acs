@@ -11,3 +11,4 @@ acs.exe
 /src-tauri/gen/
 /release/
 /ci-exe/
+/agent-env/

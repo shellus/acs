@@ -10,15 +10,17 @@ acs self version
 acs self update --yes
 ```
 
-lock 查询每个 Agent 的 npm 最新版本和 Git 来源的 HEAD，更新 environment.lock；共享 lock 只查询一次，相同 lock 指向不同 URL 会报错。失败或维护期间文件被外部修改时不覆盖原锁。与 AGS 一致，pin 不阻止 lock 更新；pin 控制应用时是否要求精确安装。
+lock 查询每个 Agent 的 npm 最新版本和 Git 来源的 HEAD，更新 environment.lock；共享 lock 只查询一次，相同 lock 指向不同 URL 会报错。失败或维护期间文件被外部修改时不覆盖原锁。pin 不阻止 lock 更新；pin 控制应用时是否要求精确安装。
 
 vendor 只处理显式指定的环境仓库，以锁定提交浅拉取上游，复用同一 lock 的 checkout；在临时工作副本执行模板替换、all 与当前平台命令、补丁和 discover，然后原子发布整个 skills/vendor。sources 的 build 命令属于仓库维护声明，会在临时副本执行，apply/status/diff 不调用它们。平台键为 windows/linux/darwin。flat、collection 扫描目录下一层，single 使用指定目录；名称读取 SKILL.md frontmatter，缺省使用目录名。
 
-补丁支持 delete_line、replace_line（首次匹配）、delete_block（首个块，结束未匹配时删除至文件末尾）；目标文件不存在时跳过，replace_line 无匹配时报错。模板替换按键排序，避免 Go map 遍历的不确定顺序。所有模型仍严格拒绝未知字段。
+补丁支持 delete_line、replace_line（首次匹配）、delete_block（首个块，结束未匹配时删除至文件末尾）；目标文件不存在时跳过，replace_line 无匹配时报错。模板替换按键排序，保证多重替换顺序稳定。所有模型严格拒绝未知字段。
 
-发布快照保持 .ags-snapshot.yaml 和现有四空格 YAML 格式。vendor 文本统一 LF，含 NUL 的二进制原样保留，和既有可移植哈希规则一致；这是为了遵循环境仓库现有的 vendor eol=lf 约定，避免上游自带 CRLF 或机器 Git 配置造成字节差异。快照及所有 payload 同步替换，失败恢复旧 vendor。
+发布快照名为 `.vendor-snapshot.yaml`，YAML 使用四空格格式；不读取旧文件名。vendor 文本统一 LF，含 NUL 的二进制原样保留，和可移植哈希规则一致；遵循环境仓库的 vendor eol=lf 约定，避免上游自带 CRLF 或机器 Git 配置造成字节差异。快照及所有 payload 同步替换，失败恢复旧 vendor。
 
 维护命令会联网。下载、构建或补丁失败时保留现有 vendor，不修改本机已应用的 Agent 文件。Node Skill 的运行依赖仍由环境应用链路在其暂存目录按 package-lock 准备，不混入 vendor 发布快照。
+
+来源与上游检出共用固定的 `core.autocrlf=false`、`core.symlinks=true`，不修改用户 Git 配置。含符号链接的仓库需要操作系统允许创建链接；Windows 维护环境应具备该权限，不能将链接悄悄发布成普通文本。
 
 ## 诊断
 

@@ -1,8 +1,8 @@
 # acs
 
-管理 Codex 与 Claude 的官方账号、自定义 API 和独立代理。采用 Rust 共享核心、Tauri 桌面界面和独立命令行入口。
+管理 Codex 与 Claude 的官方账号、自定义 API、独立代理和 Agent 环境。采用 Rust 共享核心、Tauri 桌面界面和独立命令行入口。AGS 的环境管理能力已并入 acs，AGS 退役；环境数据继续保存在独立私有 Git 仓库。
 
-[下载发布版本](https://github.com/shellus/acs/releases/latest) · [使用与 CLI 命令](docs/features/usage.md) · [架构和行为边界](docs/dev-spec/application-behavior.md)
+[下载发布版本](https://github.com/shellus/acs/releases/latest) · [账号与 CLI](docs/features/usage.md) · [Agent 环境](docs/features/agent-environment.md) · [架构和行为边界](docs/dev-spec/application-behavior.md)
 
 ## 支持范围
 
@@ -10,7 +10,9 @@
 | --- | --- | --- |
 | Windows x64 | Tauri GUI（`acs-gui.exe`）、CLI（`acs.exe`） | GUI 使用 WebView2；安装包可在缺失时安装运行时，便携 EXE 要求已安装 WebView2 |
 | macOS Apple Silicon | Tauri GUI（`.app`）、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
-| Linux x64 | 独立 CLI | musl 静态构建，不依赖 Tauri、WebView、Node.js 或系统 SQLite |
+| Linux x64 | 独立 CLI | musl 静态二进制，不依赖 Tauri、WebView、Node.js 运行时或外部 SQLite 动态库 |
+
+账号命令不要求安装 git、Node.js 或 npm。环境同步与仓库维护在运行时调用系统 git、Node.js/npm；CLI 二进制本身不捆绑这些工具。仅解析本地声明的 `env validate`、保存来源和本机选择不调用外部工具。
 
 macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的域名阻断参数。
 
@@ -33,6 +35,37 @@ Codex 只托管 `model_providers.custom`；手工添加的其他 provider 在保
 ![官方账号设置](docs/images/official-mode.png)
 
 ![自定义 API 设置](docs/images/custom-mode.png)
+
+## Agent 环境与 CLI 安装
+
+Linux x86_64：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/shellus/acs/main/scripts/install.sh | bash
+```
+
+Windows x64 PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/shellus/acs/main/scripts/install.ps1 | iex
+```
+
+脚本校验发布产物的 SHA-256，默认安装到 Linux `~/.local/bin/acs` 或 Windows `~/bin/acs.exe`；安装目录需在 PATH 中。CLI 与 GUI 独立分发，自更新只更新 CLI。
+
+```sh
+acs env source set https://example.com/agent-env.git --branch main
+acs env configure --profile default --agents codex,claude
+acs env status
+acs env diff
+acs env apply --yes
+acs doctor
+acs self version
+acs self update --yes
+```
+
+运行 `acs` 后按 `v` / F3 进入 TUI 环境页，查看具体漂移、刷新、确认应用或诊断；耗时操作在后台显示实际阶段。全局指令与 Skills 由核心事务应用；环境页不进入 Tauri GUI。已使用 AGS 的机器通过显式 `acs env import-ags` 接管，步骤见[切换说明](docs/features/agent-env-cutover.md)。
+
+来源和 Profile、路径与仓库格式见 [Agent 环境](docs/features/agent-environment.md)；锁定上游、生成 vendor、诊断、安装与更新见 [CLI 维护与分发](docs/features/cli-maintenance.md)。
 
 ## 开发与验证
 

@@ -117,11 +117,11 @@ fn vendor_builds_patches_discovers_and_repeats_byte_identically() {
         fs::read_to_string(&skill).unwrap(),
         "---\nname: 'example-vendored'\n---\ntext new\nkeep\n"
     );
-    let first = fs::read(repo.join("skills/vendor/.ags-snapshot.yaml")).unwrap();
+    let first = fs::read(repo.join("skills/vendor/.vendor-snapshot.yaml")).unwrap();
     vendor(&p, &repo, &f, |_| {}).unwrap();
     assert_eq!(
         first,
-        fs::read(repo.join("skills/vendor/.ags-snapshot.yaml")).unwrap()
+        fs::read(repo.join("skills/vendor/.vendor-snapshot.yaml")).unwrap()
     );
     validate(&repo).unwrap();
     assert!(progress.iter().any(|(n, total)| n == total && *n > 0));
@@ -206,6 +206,10 @@ fn vendor_fetches_one_locked_git_commit_for_shared_sources() {
         home: d.path().into(),
         calls: RefCell::new(vec![]),
     };
+    put(
+        &d.path().join("example-gitconfig"),
+        "[core]\nsymlinks = false\nautocrlf = true\n",
+    );
     let command = |args: &[&str]| {
         git.run(
             "git",
@@ -216,6 +220,14 @@ fn vendor_fetches_one_locked_git_commit_for_shared_sources() {
     };
     command(&["init", "--initial-branch=main"]);
     command(&["add", "."]);
+    put(&upstream.join("example-link-target"), "SKILL.md");
+    let blob = String::from_utf8(command(&["hash-object", "-w", "example-link-target"])).unwrap();
+    command(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("120000,{},first/CLAUDE.md", blob.trim()),
+    ]);
     command(&[
         "-c",
         "user.name=Example",
@@ -271,4 +283,17 @@ fn vendor_fetches_one_locked_git_commit_for_shared_sources() {
         1
     );
     validate(&repo).unwrap();
+    let link = repo.join("skills/vendor/example-first/CLAUDE.md");
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read_link(&link).unwrap(), PathBuf::from("SKILL.md"));
+    let before = fs::read(repo.join("skills/vendor").join(VENDOR_SNAPSHOT)).unwrap();
+    vendor(&Paths::under(d.path()), &repo, &git, |_| {}).unwrap();
+    assert_eq!(
+        fs::read(repo.join("skills/vendor").join(VENDOR_SNAPSHOT)).unwrap(),
+        before
+    );
+    assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
 }

@@ -95,7 +95,7 @@ fn setup() -> (tempfile::TempDir, Paths, PathBuf, Fake) {
         "---\nname: example-demo\n---\nexample\n",
     );
     put(
-        &repo.join("skills/vendor/.ags-snapshot.yaml"),
+        &repo.join("skills/vendor/.vendor-snapshot.yaml"),
         "version: 1\nsources: {}\nskills: {}\n",
     );
     set_source(&paths, repo.to_str().unwrap(), None).unwrap();
@@ -253,7 +253,14 @@ fn account_save_keeps_disabled_block_and_environment_apply_keeps_account() {
         paths: &p,
         runner: &f,
     };
-    service.apply(&service.prepare().unwrap()).unwrap();
+    let plan = service.prepare().unwrap();
+    for agent in Agent::ALL {
+        assert!(plan
+            .changes
+            .contains(&format!("{} Skills 受管标记：更新", agent.label())));
+    }
+    assert!(!plan.changes.contains(&"Skills 受管标记：更新".into()));
+    service.apply(&plan).unwrap();
     let mut session = Session::open(Store::new(p.roots.clone())).unwrap();
     let mut draft = session.original.clone();
     draft.codex.mode = Mode::Custom;
@@ -284,7 +291,7 @@ fn account_save_keeps_disabled_block_and_environment_apply_keeps_account() {
     assert_eq!(account, fs::read(p.roots.codex.join("auth.json")).unwrap());
 }
 #[test]
-fn npm_versions_minimum_pin_prerelease_and_unparseable_match_ags() {
+fn npm_versions_minimum_pin_prerelease_and_unparseable_versions() {
     let p = AgentPackage {
         agent: Agent::Codex,
         name: "example-package".into(),
@@ -554,7 +561,7 @@ fn migration_with_node_runtime_keeps_rendered_hash_and_zero_writes() {
     );
 }
 #[test]
-fn version_comparison_covers_all_ags_non_legacy_agent_cases() {
+fn version_comparison_covers_stable_prerelease_and_metadata_cases() {
     use std::cmp::Ordering::*;
     for (a, b, expected) in [
         ("2.1.295", "2.1.291", Greater),
@@ -616,7 +623,7 @@ fn source_or_installed_version_changes_invalidate_the_displayed_plan_before_any_
         "environment.lock",
         "instructions/global.md",
         "skills/local/example-demo/SKILL.md",
-        "skills/vendor/.ags-snapshot.yaml",
+        "skills/vendor/.vendor-snapshot.yaml",
         "installed-version",
     ] {
         let (_d, p, repo, f) = setup();

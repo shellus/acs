@@ -7,7 +7,7 @@ pub struct SkillUnit {
     pub name: String,
     pub path: PathBuf,
 }
-/// include 支持 *、名称、单 Skill 来源、来源:glob；exclude 与 AGS 一致，仅精确匹配。
+/// include 支持 *、名称、单 Skill 来源、来源:glob；exclude 仅精确匹配。
 pub fn select_units(
     include: &[String],
     exclude: &[String],
@@ -187,12 +187,12 @@ pub(super) fn validate(repo: &Repository) -> Result<()> {
             bail!("重复发布 Skill {}", u.name);
         }
     }
-    // 发布快照是环境仓库数据格式的一部分，继续读取原有文件名。
+    // 只读取当前发布格式；数据仓库通过维护命令一次性切换文件名。
     let snapshot: SkillSnapshot = load_yaml(
         &repo
             .root
             .join(&repo.manifest.skills.vendor)
-            .join(".ags-snapshot.yaml"),
+            .join(VENDOR_SNAPSHOT),
     )?;
     if snapshot.version != 1
         || snapshot.sources != repo.lock.sources

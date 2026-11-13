@@ -34,6 +34,7 @@ use std::{
 };
 
 pub const MANAGED_MARKER: &str = ".acs-managed.json";
+pub const VENDOR_SNAPSHOT: &str = ".vendor-snapshot.yaml";
 pub const DISABLED_BEGIN: &str = "# BEGIN ACS MANAGED CODEX DISABLED SKILLS";
 pub const DISABLED_END: &str = "# END ACS MANAGED CODEX DISABLED SKILLS";
 #[derive(Clone, Debug)]
@@ -220,15 +221,7 @@ pub fn source_repository(paths: &Paths, source: &str, branch: &str) -> Result<Re
             branch.as_ref(),
         ],
     )?;
-    git(
-        Some(&checkout),
-        &[
-            "checkout".as_ref(),
-            "--detach".as_ref(),
-            "--force".as_ref(),
-            "FETCH_HEAD".as_ref(),
-        ],
-    )?;
+    command::checkout_files(&command::SystemRunner, &checkout, "FETCH_HEAD")?;
     git(Some(&checkout), &["clean".as_ref(), "-fdx".as_ref()])?;
     Repository::load(&checkout)
 }

@@ -94,7 +94,7 @@ impl Repository {
     }
 }
 
-/// 与既有 AGS 版本比较一致：可带 v、构建元数据，无法解析时由调用方保留安装。
+/// 版本比较支持：可带 v、构建元数据，无法解析时由调用方保留安装。
 pub fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     fn parse(v: &str) -> Option<([i64; 3], Vec<&str>)> {
         let v = v

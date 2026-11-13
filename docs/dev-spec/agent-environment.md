@@ -22,7 +22,7 @@ acs env import-ags
 
 ## 路径和本机数据
 
-四个配置环境变量统一由 `storage::Roots` 解析，账号与环境命令共用。保留历史账号入口语义：变量存在时按原路径使用，包括空字符串与字面 `~`；仅未设置才回退。第一段 env 特有的 `~` 展开、空值回退已取消。建议 shell 展开主目录或传绝对路径，避免把空值解释成当前目录。桌面配置的系统目录发现仍使用 dirs 提供的平台规则。
+四个配置环境变量统一由 `storage::Roots` 解析，账号与环境命令共用。变量存在时按原路径使用，包括空字符串与字面 `~`；仅未设置才回退。建议 shell 展开主目录或传绝对路径，避免把空值解释成当前目录。桌面配置的系统目录发现使用 dirs 提供的平台规则。
 
 | 数据 | 路径与格式 |
 | --- | --- |
@@ -32,7 +32,7 @@ acs env import-ags
 | 应用状态 | ACS_HOME/state/environment.json，JSON v1；source、branch、commit、profile、agents |
 | Agent 状态 | version、instruction_hash、skills（名称到哈希）、skills_root |
 | Skills 标记 | Skills 根下 .acs-managed.json，JSON v1，skills（名称到哈希） |
-| 迁移收据 | ACS_HOME/state/ags-import.json，JSON v1；旧配置/状态路径及其联合内容哈希 |
+| 迁移收据 | ACS_HOME/state/environment-import.json，JSON v1；旧配置/状态路径及其联合内容哈希 |
 | 排他锁 | ACS_HOME/operation.lock，与账号保存、历史修复共用 Store::lock |
 
 ACS_HOME 默认用户目录下 .acs；CODEX_HOME 默认 .codex；CLAUDE_CONFIG_DIR 默认 .claude。Codex Skills 固定在用户目录下 .agents/skills，Claude Skills 位于其配置根下 skills。`--root` 优先于环境变量，采用 Roots::under，Codex Skills 放到该隔离根下 .agents/skills；导入默认也只从该隔离根寻找旧布局。
@@ -41,15 +41,15 @@ ACS_HOME 默认用户目录下 .acs；CODEX_HOME 默认 .codex；CLAUDE_CONFIG_D
 
 ## 快照、计划和应用
 
-environment.yaml/environment.lock 使用 version 2，所有模型拒绝未知字段；只接受 codex/claude，其他 Agent 报字段路径和 YAML 行列。快照文件 .ags-snapshot.yaml 属于既有仓库数据格式，继续保留其名称。
+environment.yaml/environment.lock 使用 version 2，所有模型拒绝未知字段；只接受 codex/claude，其他 Agent 报字段路径和 YAML 行列。发布快照固定为 `.vendor-snapshot.yaml`，由 vendor 生成；仓库需一次性切换，普通读取不兼容旧名。开发时将数据仓库检出到源码根下的 `agent-env/`，该目录被忽略且不是子模块；来源解析不依赖这一开发约定。
 
 Profile 与 Agent 的 include/exclude 分别拼接。include 支持 *、Skill 名、单 Skill 来源、来源:名称和来源:glob；exclude 精确匹配名称或来源:名称。重复选择去重，同名不同来源及无匹配 include 报错。disabled_skills 仅允许 Codex，名称须安全且不可重复。
 
 validate 检查全局指令、local/vendor 唯一性、快照锁与选择、数量、哈希和每个 Profile 的选择；文本哈希将 CRLF 规范为 LF，含 NUL 的文件按原字节计算。声明路径不能绝对或越界；build template/output 成对，平台仅 all/windows/linux/darwin；patch 文件严格解析 source、操作和正则。validate 不运行 git/npm/build/patch。
 
-prepare 同步环境仓库，校验后只消费 skills/local、skills/vendor；不会调用上游 sources 的 clone、build 或 patches。与 AGS 一致，Node Skill 要求 package-lock.json，并在暂存目录用 npm ci 准备运行依赖（禁用 Playwright 浏览器自动下载）。已安装内容匹配受管哈希且快照载荷未变化时复用完整运行目录，不重复 npm ci；变化或新增的 Node Skill 可能在 diff/status 准备阶段访问 npm。此过程不安装全局包。
+prepare 同步环境仓库，校验后只消费 skills/local、skills/vendor；不会调用上游 sources 的 clone、build 或 patches。Node Skill 要求 package-lock.json，并在暂存目录用 npm ci 准备运行依赖（禁用 Playwright 浏览器自动下载）。已安装内容匹配受管哈希且快照载荷未变化时复用完整运行目录，不重复 npm ci；变化或新增的 Node Skill 可能在 diff/status 准备阶段访问 npm。此过程不安装全局包。
 
-计划明确列出新增、更新、同名非受管内容接管、受管项删除及历史根清理。用户修改过的受管内容按 AGS 语义计划更新，非受管同名内容按接管处理，必须随 apply 确认；无关非受管项、旧根中的个人内容和系统 Skills 保留。文件或链接形式的 Skills 根可以计划接管，目录链接本身被替换，其指向的数据不改动。
+计划明确列出新增、更新、同名非受管内容接管、受管项删除及历史根清理。用户修改过的受管内容计划更新，非受管同名内容按接管处理，必须随 apply 确认；无关非受管项、旧根中的个人内容和系统 Skills 保留。受管标记变更带 Agent 名称，避免两个根的更新无法区分。文件或链接形式的 Skills 根可以计划接管，目录链接本身被替换，其指向的数据不改动。
 
 Codex 使用 `# BEGIN ACS MANAGED CODEX DISABLED SKILLS` / `# END ACS MANAGED CODEX DISABLED SKILLS`，生成排序后的 skills.config 数组，保留其余文本和换行风格；重复、缺失、逆序标记拒绝写入。账号保存先拆出此块，再编辑其余 TOML，最后原样接回；env 只更新块。两条路径共用操作锁和目标基线，旧账号草稿不会覆盖后来 apply 的禁用配置。
 

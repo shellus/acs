@@ -73,7 +73,7 @@ pub(super) fn configure_fixture(app: &mut App, root: &Path) {
         "---\nname: example-demo\n---\nexample skill\n",
     );
     put(
-        &repo.join("skills/vendor/.ags-snapshot.yaml"),
+        &repo.join("skills/vendor/.vendor-snapshot.yaml"),
         "version: 1\nsources: {}\nskills: {}\n",
     );
     env::set_source(&app.environment.paths, repo.to_str().unwrap(), None).unwrap();

@@ -210,19 +210,7 @@ fn checkout(
             Some(&root),
         )?;
     }
-    run(
-        runner,
-        "git",
-        &[
-            "-c",
-            "core.autocrlf=false",
-            "checkout",
-            "--detach",
-            "--force",
-            commit,
-        ],
-        Some(&root),
-    )?;
+    command::checkout_files(runner, &root, commit)?;
     run(runner, "git", &["clean", "-fdx"], Some(&root))?;
     Ok(root)
 }
@@ -440,7 +428,7 @@ pub fn vendor(
             total,
         });
     }
-    fs::write(stage.join(".ags-snapshot.yaml"), snapshot_text(&snapshot)?)?;
+    fs::write(stage.join(VENDOR_SNAPSHOT), snapshot_text(&snapshot)?)?;
     verify_baselines(&baseline_files)?;
     tree::commit(
         &[tree::DirectoryChange {

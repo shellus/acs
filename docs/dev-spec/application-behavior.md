@@ -4,18 +4,20 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `crates/core`（`acs-core`） | 配置、凭据、Codex PKCE OAuth、快照、代理、目标文件保存、历史修复、启动计划 |
+| `crates/core`（`acs-core`） | 配置、凭据、Codex PKCE OAuth、账号快照、代理、目标文件保存、历史修复、启动计划、Agent 环境计划/事务/维护/诊断与 CLI 校验更新 |
 | `crates/cli`（`acs`） | clap 参数、ratatui/crossterm 全屏状态与就地表单、对齐列表输出和退出码；调用核心 |
 | `src-tauri`（`acs-gui`） | IPC、窗口生命周期、后台修复和进度事件 |
 | `ui/src` | React + Radix Themes 表单、内存草稿、显示与确认 |
 
-核心不依赖 Tauri。默认 workspace 只构建核心和 CLI，Linux 无 GUI 依赖。SQLite 编译进二进制，不调用 Windows 专用 DLL。平台差异集中在 `launch.rs`。
+核心不依赖 Tauri。默认 workspace 只构建核心和 CLI，Linux 使用 musl 静态构建。SQLite 编译进二进制，不依赖外部动态库。环境功能在运行时调用系统 git、Node.js/npm；既有账号功能不要求这些工具。启动平台差异集中在 `launch`，环境业务边界见 [Agent 环境规范](agent-environment.md)。
+
+AGS 的环境管理职责已合并到共享核心，独立执行器退役；账号/Provider 继续使用 acs 的既有体系，不引入另一套 Provider 注册表。环境仓库保持独立私有 Git 仓库，架构决定见 [ADR-0001](../adr/0001-agent-environment-in-core.md)。
 
 ## 目录
 
 | 目录 | 决定方式 | 内容 |
 | --- | --- | --- |
-| `acs` | `ACS_HOME`，默认 `~/.acs` | 配置库、窗口状态、日志、修复备份、操作锁 |
+| `acs` | `ACS_HOME`，默认 `~/.acs` | 配置库、窗口状态、日志、修复备份、操作锁、环境本机选择/缓存/状态 |
 | `codex` | `CODEX_HOME`，默认 `~/.codex` | `config.toml`、`auth.json`、`.env` 托管区块 |
 | `claude` | `CLAUDE_CONFIG_DIR`，默认 `~/.claude` | `settings.json`、`.credentials.json` |
 | `claude_json` | 随 `CLAUDE_CONFIG_DIR`，默认 `~/.claude.json` | 只管理 `oauthAccount` 字段 |

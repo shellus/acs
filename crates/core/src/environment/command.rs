@@ -46,3 +46,21 @@ pub fn run(
         dir,
     )
 }
+/// Repository payloads must keep Git link types and LF regardless of user Git defaults.
+pub(super) fn checkout_files(runner: &dyn Runner, root: &Path, revision: &str) -> Result<Vec<u8>> {
+    run(
+        runner,
+        "git",
+        &[
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.symlinks=true",
+            "checkout",
+            "--detach",
+            "--force",
+            revision,
+        ],
+        Some(root),
+    )
+}

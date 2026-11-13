@@ -372,7 +372,7 @@ fn environment_commands_are_isolated_and_missing_arguments_are_usage_errors() {
     fs::write(r.join("skills/local/example-demo/SKILL.md"), "example").unwrap();
     fs::create_dir_all(r.join("skills/vendor")).unwrap();
     fs::write(
-        r.join("skills/vendor/.ags-snapshot.yaml"),
+        r.join("skills/vendor/.vendor-snapshot.yaml"),
         "version: 1\nsources: {}\nskills: {}\n",
     )
     .unwrap();
@@ -459,6 +459,11 @@ fn environment_remote_source_fetch_preserves_saved_config_on_failure() {
     let d = tempfile::tempdir().unwrap();
     let local = tempfile::tempdir().unwrap();
     fs::write(
+        local.path().join("example-gitconfig"),
+        "[core]\nsymlinks = false\nautocrlf = true\n",
+    )
+    .unwrap();
+    fs::write(
         d.path().join("environment.yaml"),
         include_str!("../../core/tests/fixtures/environment/environment.yaml"),
     )
@@ -478,9 +483,18 @@ fn environment_remote_source_fetch_preserves_saved_config_on_failure() {
             .output()
             .unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        o.stdout
     };
     git(&["init", "--initial-branch=main"]);
     git(&["add", "."]);
+    fs::write(d.path().join("example-link-target"), "environment.yaml").unwrap();
+    let blob = String::from_utf8(git(&["hash-object", "-w", "example-link-target"])).unwrap();
+    git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("120000,{},example-link.yaml", blob.trim()),
+    ]);
     git(&[
         "-c",
         "user.name=Example",
@@ -515,6 +529,18 @@ fn environment_remote_source_fetch_preserves_saved_config_on_failure() {
         .unwrap()
         .unwrap()
         .path();
+    assert!(fs::symlink_metadata(checkout.join("example-link.yaml"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_link(checkout.join("example-link.yaml")).unwrap(),
+        std::path::PathBuf::from("environment.yaml")
+    );
+    assert!(!fs::read(checkout.join("environment.yaml"))
+        .unwrap()
+        .windows(2)
+        .any(|p| p == b"\r\n"));
     fs::remove_dir_all(&checkout).unwrap();
     fs::create_dir(&checkout).unwrap();
     fs::write(checkout.join("example-partial-clone"), "example").unwrap();
@@ -551,7 +577,7 @@ fn environment_cli_apply_status_and_agent_group_use_isolated_npm() {
             "---\nname: example-demo\n---\nexample\n",
         ),
         (
-            "skills/vendor/.ags-snapshot.yaml",
+            "skills/vendor/.vendor-snapshot.yaml",
             "version: 1\nsources: {}\nskills: {}\n",
         ),
     ] {

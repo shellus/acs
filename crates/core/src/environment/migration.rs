@@ -74,7 +74,7 @@ fn import_with(
     let old_config = fs::read(&legacy.config).context("读取 AGS 本机配置")?;
     let old_state = fs::read(&legacy.state).context("读取 AGS 应用状态")?;
     let source_hash = digest(&[old_config.as_slice(), old_state.as_slice()].concat());
-    let receipt_path = paths.roots.acs.join("state/ags-import.json");
+    let receipt_path = paths.roots.acs.join("state/environment-import.json");
     if let Some(bytes) = storage::read(&receipt_path)? {
         let receipt: Receipt = serde_json::from_slice(&bytes)?;
         if receipt.version == 1
@@ -226,7 +226,11 @@ mod tests {
             assert!(!paths.codex_skills.join(MANAGED_MARKER).exists());
             assert!(!paths.config().exists());
             assert!(!paths.state().exists());
-            assert!(!paths.roots.acs.join("state/ags-import.json").exists());
+            assert!(!paths
+                .roots
+                .acs
+                .join("state/environment-import.json")
+                .exists());
         }
     }
 }

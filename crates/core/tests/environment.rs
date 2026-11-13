@@ -18,7 +18,7 @@ fn fixture() -> tempfile::TempDir {
     );
     put(
         r,
-        "skills/vendor/.ags-snapshot.yaml",
+        "skills/vendor/.vendor-snapshot.yaml",
         "version: 1\nsources: {}\nskills: {}\n",
     );
     d
@@ -227,7 +227,7 @@ fn published_hashes_and_tampering() {
     assert_eq!(tree_hash(&skill).unwrap(), h);
     put(
         d.path(),
-        "skills/vendor/.ags-snapshot.yaml",
+        "skills/vendor/.vendor-snapshot.yaml",
         &format!("version: 1\nskills:\n  example-upstream: {{source: example, hash: '{h}'}}\n"),
     );
     validate(d.path()).unwrap();

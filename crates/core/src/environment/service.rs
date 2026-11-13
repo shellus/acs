@@ -336,7 +336,7 @@ impl Service<'_> {
                         &mut plan,
                         root.join(MANAGED_MARKER),
                         Some(marker.encode()?),
-                        "Skills 受管标记：更新",
+                        &format!("{} Skills 受管标记：更新", agent.label()),
                     )?;
                 }
             }
