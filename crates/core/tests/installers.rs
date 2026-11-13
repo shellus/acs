@@ -78,6 +78,8 @@ fn powershell_installer_offline_success_hash_interruption_and_platform() {
         );
     }
 }
+// install.sh 只支持 Linux；macOS 自带 bash 3.2 且缺 sha256sum，不冒充 Linux 运行。
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn bash_installer_offline_success_hash_interruption_and_platform() {
     #[cfg(windows)]

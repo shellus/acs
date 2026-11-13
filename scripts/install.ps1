@@ -20,7 +20,9 @@ try {
     if ($lines.Count -ne 1) { throw "Missing, duplicate or invalid SHA-256" }
     $expected = ($lines[0] -split '\s+')[0].ToLowerInvariant()
     $payload = Join-Path $taskTmp $asset
-    if ((Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "SHA-256 mismatch; installation unchanged" }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $actual = -join ($sha.ComputeHash([IO.File]::ReadAllBytes($payload)) | ForEach-Object { $_.ToString("x2") }) } finally { $sha.Dispose() }
+    if ($actual -ne $expected) { throw "SHA-256 mismatch; installation unchanged" }
     $bytes = [IO.File]::ReadAllBytes($payload)
     if ($bytes.Length -lt 64 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "Not a Windows PE binary" }
     $offset = [BitConverter]::ToUInt32($bytes, 60)

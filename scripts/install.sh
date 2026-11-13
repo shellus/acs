@@ -19,7 +19,8 @@ fetch "$asset.sha256" "$task_tmp/sum"
 expected="$(awk -v name="$asset" '$2 == name || $2 == "*" name {print $1}' "$task_tmp/sum")"
 [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || { printf 'Missing, duplicate or invalid SHA-256\n' >&2; exit 1; }
 actual="$(sha256sum "$task_tmp/$asset")"; actual="${actual%% *}"
-[[ "${expected,,}" == "$actual" ]] || { printf 'SHA-256 mismatch; installation unchanged\n' >&2; exit 1; }
+expected="$(printf %s "$expected" | tr A-F a-f)"
+[[ "$expected" == "$actual" ]] || { printf 'SHA-256 mismatch; installation unchanged\n' >&2; exit 1; }
 file="$task_tmp/$asset"
 magic="$(od -An -tx1 -N6 "$file" | tr -d ' \n')"
 [[ "$magic" == 7f454c460201 && "$(od -An -tu2 -j18 -N2 "$file" | tr -d ' ')" == 62 ]] || { printf 'Not Linux x64 ELF\n' >&2; exit 1; }
