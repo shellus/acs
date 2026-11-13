@@ -6,6 +6,9 @@ $ErrorActionPreference = "Stop"
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne "X64" -or [Environment]::OSVersion.Platform -ne "Win32NT") { throw "Only Windows x64 is supported" }
 if (-not $InstallDir) { $InstallDir = Join-Path $HOME "bin" }
 $asset = "acs-cli-windows-x64.exe"
+# Windows PowerShell ignores HTTPS_PROXY; honor it explicitly like curl does.
+$proxy = @{}
+foreach ($value in @($env:HTTPS_PROXY, $env:https_proxy, $env:ALL_PROXY, $env:all_proxy)) { if ($value) { $proxy = @{ Proxy = $value }; break } }
 $staged = $null
 $taskTmp = Join-Path ([IO.Path]::GetTempPath()) ("acs-install-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $taskTmp | Out-Null
@@ -13,7 +16,7 @@ try {
     foreach ($name in @($asset, "$asset.sha256")) {
         $destination = Join-Path $taskTmp $name
         if ($ReleaseDir) { Copy-Item -LiteralPath (Join-Path $ReleaseDir $name) -Destination $destination }
-        else { Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 "$ReleaseBase/$name" -OutFile $destination }
+        else { Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 "$ReleaseBase/$name" -OutFile $destination @proxy }
     }
     $lines = @(Get-Content -LiteralPath (Join-Path $taskTmp "$asset.sha256") | Where-Object { $_ -match "^([a-fA-F0-9]{64})\s+\*?$([regex]::Escape($asset))$" })
     if ($lines.Count -ne 1) { throw "Missing, duplicate or invalid SHA-256" }
