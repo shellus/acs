@@ -11,7 +11,7 @@ trap 'rm -rf -- "$task_tmp"' EXIT
 base="${ACS_RELEASE_BASE:-https://github.com/shellus/acs/releases/latest/download}"
 fetch() {
   if [[ -n "${ACS_RELEASE_DIR:-}" ]]; then cp -- "$ACS_RELEASE_DIR/$1" "$2";
-  else command -v curl >/dev/null; curl --fail --location --silent --show-error --connect-timeout 15 --max-time 180 "$base/$1" -o "$2"; fi
+  else command -v curl >/dev/null; curl --fail --location --silent --show-error --connect-timeout 15 --speed-limit 1024 --speed-time 60 "$base/$1" -o "$2"; fi
 }
 fetch "$asset" "$task_tmp/$asset"
 fetch "$asset.sha256" "$task_tmp/sum"

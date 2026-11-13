@@ -21,7 +21,9 @@ impl HttpDownloader {
     pub fn new() -> Result<Self> {
         Ok(Self(
             reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(120))
+                // 慢线路下载 11MB 可能需数分钟；只限制连接耗时，整体上限仅防止永久挂起。
+                .connect_timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(1800))
                 .user_agent("acs-cli-update")
                 .build()?,
         ))
