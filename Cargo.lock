@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acs"
-version = "3.1.1"
+version = "3.1.2"
 dependencies = [
  "acs-core",
  "anyhow",
@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "acs-core"
-version = "3.1.1"
+version = "3.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "acs-gui"
-version = "3.1.1"
+version = "3.1.2"
 dependencies = [
  "acs-core",
  "serde",
