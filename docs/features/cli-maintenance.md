@@ -42,7 +42,7 @@ irm https://raw.githubusercontent.com/shellus/acs/main/scripts/install.ps1 | iex
 
 默认安装到 Linux 的 ~/.local/bin/acs、Windows 的 ~/bin/acs.exe。ACS_INSTALL_DIR 可显式指定目录；脚本不写用户 PATH，完成后提示将目录加入 PATH。不需要 GUI、Node 或 npm 来运行安装脚本或 CLI 的既有账号功能。Linux 安装需要 Bash、curl、sha256sum、od 等基础命令。
 
-离线安装使用相同脚本与校验逻辑：将对应 CLI 和 .sha256 放在一个目录，设置 ACS_RELEASE_DIR。PowerShell 也接受 -ReleaseDir 与 -InstallDir。ACS_RELEASE_BASE（Bash）或 -ReleaseBase（PowerShell）可指定已审核的发布镜像，资产名与校验格式必须一致。
+离线安装使用相同脚本与校验逻辑：将对应 CLI 和 .sha256 放在一个目录，设置 ACS_RELEASE_DIR；安装目录用 ACS_INSTALL_DIR 指定。ACS_RELEASE_BASE 可指定已审核的发布镜像，资产名与校验格式必须一致。
 
 | 平台 | 原始 CLI 资产 | 校验文件 |
 | --- | --- | --- |

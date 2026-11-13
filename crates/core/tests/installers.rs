@@ -55,13 +55,18 @@ fn powershell_installer_offline_success_hash_interruption_and_platform() {
         let d = tempfile::tempdir().unwrap();
         let (release, target, bytes) = setup(d.path(), true, mode);
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/install.ps1");
+        // 与 README 的 irm | iex 用法一致：以文本经 Invoke-Expression 执行，选项走环境变量。
         let out = Command::new("powershell.exe")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-            .arg(script)
-            .arg("-ReleaseDir")
-            .arg(&release)
-            .arg("-InstallDir")
-            .arg(&target)
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Get-Content -Raw -LiteralPath $env:ACS_EXAMPLE_SCRIPT | Invoke-Expression",
+            ])
+            .env("ACS_EXAMPLE_SCRIPT", script)
+            .env("ACS_RELEASE_DIR", &release)
+            .env("ACS_INSTALL_DIR", &target)
             .output()
             .unwrap();
         assert_eq!(

@@ -1,8 +1,7 @@
-﻿param(
-    [string]$InstallDir = $env:ACS_INSTALL_DIR,
-    [string]$ReleaseBase = "https://github.com/shellus/acs/releases/latest/download",
-    [string]$ReleaseDir = $env:ACS_RELEASE_DIR
-)
+# Runs via "irm | iex", so options come from environment variables instead of a param block.
+$InstallDir = $env:ACS_INSTALL_DIR
+$ReleaseBase = if ($env:ACS_RELEASE_BASE) { $env:ACS_RELEASE_BASE } else { "https://github.com/shellus/acs/releases/latest/download" }
+$ReleaseDir = $env:ACS_RELEASE_DIR
 $ErrorActionPreference = "Stop"
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne "X64" -or [Environment]::OSVersion.Platform -ne "Win32NT") { throw "Only Windows x64 is supported" }
 if (-not $InstallDir) { $InstallDir = Join-Path $HOME "bin" }
