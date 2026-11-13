@@ -1,4 +1,6 @@
 //! 安装脚本只使用临时离线发布目录；不写真实安装位置或用户 PATH。
+//! 安装脚本只支持 Linux 与 Windows；macOS 自带 bash 3.2 且缺 sha256sum，不冒充 Linux 运行。
+#![cfg(not(target_os = "macos"))]
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -78,8 +80,6 @@ fn powershell_installer_offline_success_hash_interruption_and_platform() {
         );
     }
 }
-// install.sh 只支持 Linux；macOS 自带 bash 3.2 且缺 sha256sum，不冒充 Linux 运行。
-#[cfg(not(target_os = "macos"))]
 #[test]
 fn bash_installer_offline_success_hash_interruption_and_platform() {
     #[cfg(windows)]
