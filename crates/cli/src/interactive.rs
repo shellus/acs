@@ -736,7 +736,7 @@ impl App {
                             } else {
                                 self.result(
                                     Err(anyhow::anyhow!(
-                                        "Claude 官方账号请由 Claude 客户端登录；API 配置无需 OAuth"
+                                        "Claude 官方账号请在终端运行 claude /login 登录；API 配置无需 OAuth"
                                     )),
                                     "",
                                 );

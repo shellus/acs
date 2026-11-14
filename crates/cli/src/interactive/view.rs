@@ -171,7 +171,7 @@ pub(super) fn draw(f: &mut Frame, app: &App) {
     } else if app.filtering {
         "/ 过滤输入 · Enter 应用 · Esc 返回"
     } else if app.agent == Agent::Claude {
-        "Claude官方账号由客户端登录 · ↑↓ Tab Enter e n c r d s p / ? q"
+        "终端运行 claude /login 登录 · ↑↓ Tab Enter e n c r d s p / ? q"
     } else if app
         .selected()
         .is_some_and(|(m, p)| m == Mode::Official && p.official_auth.is_none())
@@ -441,7 +441,7 @@ fn detail(f: &mut Frame, area: Rect, app: &App) {
                 } else if app.agent == Agent::Codex {
                     "未登录；按 l 打开登录确认，可先设置官方代理".into()
                 } else {
-                    "未登录；请由 Claude 客户端自行登录（不提供 acs OAuth）".into()
+                    "未登录；在终端运行 claude /login（桌面版登录不共享给命令行）".into()
                 },
             ),
             (
@@ -633,7 +633,7 @@ fn type_picker(f: &mut Frame, area: Rect, app: &App) {
     let description = if app.agent == Agent::Codex {
         "保存后可立即用 OAuth 登录"
     } else {
-        "由 Claude 客户端自行登录"
+        "终端运行 claude /login 登录"
     };
     for (i, mode) in [Mode::Official, Mode::Custom].into_iter().enumerate() {
         let active = form.mode == mode;

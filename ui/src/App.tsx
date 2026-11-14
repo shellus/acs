@@ -392,7 +392,9 @@ export default function App() {
                           <p>
                             {profile.official_auth
                               ? "已保存本地凭据；账号是否有效由客户端验证。"
-                              : "保存并启动后，在官方客户端登录此账号。"}
+                              : agent === "claude"
+                                ? "Claude Code 命令行未登录：保存后在终端运行 claude /login。桌面版的登录不共享给命令行。"
+                                : "保存并启动后，在官方客户端登录此账号。"}
                           </p>
                         </div>
                         <Field
