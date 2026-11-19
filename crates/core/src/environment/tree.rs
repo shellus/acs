@@ -11,11 +11,14 @@ pub struct DirectoryChange {
 /// 原字节与链接目标参与并发基线，不跟随目录链接。
 pub fn fingerprint(path: &Path) -> Result<String> {
     let mut hash = Sha256::new();
-    if !path.try_exists()? && fs::symlink_metadata(path).is_err() {
-        return Ok("absent".into());
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("absent".into()),
+        Err(e) => return Err(e).with_context(|| format!("检查 Skills 路径 {}", path.display())),
     }
     for e in walkdir::WalkDir::new(path)
         .follow_links(false)
+        .follow_root_links(false)
         .sort_by_file_name()
     {
         let e = e?;
@@ -23,12 +26,20 @@ pub fn fingerprint(path: &Path) -> Result<String> {
         let ty = e.file_type();
         if ty.is_symlink() {
             hash.update(b"link");
-            hash.update(fs::read_link(e.path())?.to_string_lossy().as_bytes());
+            hash.update(
+                fs::read_link(e.path())
+                    .with_context(|| format!("读取链接 {}", e.path().display()))?
+                    .to_string_lossy()
+                    .as_bytes(),
+            );
         } else if ty.is_dir() {
             hash.update(b"dir");
         } else {
             hash.update(b"file");
-            hash.update(fs::read(e.path())?);
+            hash.update(
+                fs::read(e.path())
+                    .with_context(|| format!("读取 Skills 基线 {}", e.path().display()))?,
+            );
         }
         hash.update([0]);
     }
@@ -39,7 +50,8 @@ pub fn remove(path: &Path) -> Result<()> {
         Ok(m) if m.file_type().is_symlink() => {
             #[cfg(windows)]
             {
-                if m.is_dir() {
+                use std::os::windows::fs::FileTypeExt;
+                if m.file_type().is_symlink_dir() {
                     fs::remove_dir(path)?;
                 } else {
                     fs::remove_file(path)?;
@@ -56,6 +68,10 @@ pub fn remove(path: &Path) -> Result<()> {
     Ok(())
 }
 pub fn copy(source: &Path, target: &Path) -> Result<()> {
+    copy_inner(source, target)
+        .with_context(|| format!("复制 Skill {} 到 {}", source.display(), target.display()))
+}
+fn copy_inner(source: &Path, target: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(source)?;
     if meta.file_type().is_symlink() {
         let link = fs::read_link(source)?;
@@ -63,7 +79,8 @@ pub fn copy(source: &Path, target: &Path) -> Result<()> {
         std::os::unix::fs::symlink(link, target)?;
         #[cfg(windows)]
         {
-            if source.is_dir() {
+            use std::os::windows::fs::FileTypeExt;
+            if meta.file_type().is_symlink_dir() {
                 std::os::windows::fs::symlink_dir(link, target)?;
             } else {
                 std::os::windows::fs::symlink_file(link, target)?;
@@ -80,6 +97,86 @@ pub fn copy(source: &Path, target: &Path) -> Result<()> {
         fs::copy(source, target)?;
     }
     Ok(())
+}
+
+/// Read linked payloads without asking Windows to traverse a lower-trust link.
+/// Every component is checked without following links; targets must stay inside
+/// this Skill. Keep the published hash convention (target bytes, not link text).
+pub(super) fn read_payload(root: &Path, path: &Path) -> Result<Vec<u8>> {
+    read_payload_with(root, path, |p| fs::read(p))
+}
+fn read_payload_with(
+    root: &Path,
+    path: &Path,
+    mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let resolved = resolve_payload(root, path)
+        .with_context(|| format!("解析 Skill 文件 {}", path.display()))?;
+    read(&resolved).with_context(|| {
+        format!(
+            "读取 Skill 文件 {}（解析为 {}）",
+            path.display(),
+            resolved.display()
+        )
+    })
+}
+fn resolve_payload(root: &Path, path: &Path) -> Result<PathBuf> {
+    use std::{collections::VecDeque, ffi::OsString, path::Component};
+    let mut pending: VecDeque<OsString> = path
+        .strip_prefix(root)?
+        .components()
+        .map(|c| c.as_os_str().to_owned())
+        .collect();
+    let mut relative = PathBuf::new();
+    let mut links = 0;
+    while let Some(part) = pending.pop_front() {
+        let part = Path::new(&part);
+        match part.components().next().context("空路径组件")? {
+            Component::CurDir => continue,
+            Component::ParentDir => {
+                if !relative.pop() {
+                    bail!("链接目标越出 Skill 根 {}", root.display());
+                }
+                continue;
+            }
+            Component::Normal(name) => relative.push(name),
+            _ => bail!("链接目标必须是 Skill 内相对路径"),
+        }
+        let candidate = root.join(&relative);
+        let meta = fs::symlink_metadata(&candidate)
+            .with_context(|| format!("检查 {}", candidate.display()))?;
+        if meta.file_type().is_symlink() {
+            links += 1;
+            if links > 40 {
+                bail!("链接循环或层数超过 40：{}", candidate.display());
+            }
+            let target = fs::read_link(&candidate)
+                .with_context(|| format!("读取链接 {}", candidate.display()))?;
+            if target
+                .components()
+                .any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+            {
+                bail!(
+                    "链接目标必须是 Skill 内相对路径：{} -> {}",
+                    candidate.display(),
+                    target.display()
+                );
+            }
+            relative.pop();
+            for c in target.components().rev() {
+                pending.push_front(c.as_os_str().to_owned());
+            }
+            continue;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if meta.file_attributes() & 0x400 != 0 {
+                bail!("不支持的重解析点：{}", candidate.display());
+            }
+        }
+    }
+    Ok(root.join(relative))
 }
 pub fn commit(dirs: &[DirectoryChange], files: &[Change]) -> Result<()> {
     commit_with(
@@ -171,6 +268,107 @@ fn commit_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn link_file(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).unwrap();
+    }
+    #[test]
+    fn payload_resolves_internal_links_without_traversing_untrusted_link() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let target = root.join("AGENTS.md");
+        let link = root.join("CLAUDE.md");
+        fs::write(&target, b"example\r\n").unwrap();
+        link_file(Path::new("AGENTS.md"), &link);
+        let bytes = read_payload_with(root, &link, |p| {
+            if p == link {
+                return Err(std::io::Error::from_raw_os_error(448));
+            }
+            assert_eq!(p, target);
+            fs::read(p)
+        })
+        .unwrap();
+        assert_eq!(bytes, b"example\r\n");
+        let linked_hash = super::super::tree_hash(root).unwrap();
+        fs::remove_file(&link).unwrap();
+        fs::write(&link, b"example\n").unwrap();
+        assert_eq!(linked_hash, super::super::tree_hash(root).unwrap());
+    }
+    #[test]
+    fn payload_io_error_preserves_original_and_resolved_paths_and_os_error() {
+        let d = tempfile::tempdir().unwrap();
+        let target = d.path().join("AGENTS.md");
+        let link = d.path().join("CLAUDE.md");
+        fs::write(&target, b"example").unwrap();
+        link_file(Path::new("AGENTS.md"), &link);
+        let error = read_payload_with(d.path(), &link, |_| {
+            Err(std::io::Error::from_raw_os_error(448))
+        })
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(&link.display().to_string()));
+        assert!(message.contains(&target.display().to_string()));
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(448)
+        );
+    }
+    #[test]
+    fn payload_rejects_escape_absolute_cycles_and_missing_targets_without_reading() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("skill");
+        fs::create_dir(&root).unwrap();
+        let outside = d.path().join("outside");
+        fs::write(&outside, b"untouched").unwrap();
+        for target in [
+            PathBuf::from("../outside"),
+            outside.clone(),
+            PathBuf::from("link"),
+            PathBuf::from("missing"),
+        ] {
+            let link = root.join("link");
+            link_file(&target, &link);
+            let error = read_payload_with(&root, &link, |_| panic!("must reject before reading"))
+                .unwrap_err();
+            assert!(format!("{error:#}").contains(&link.display().to_string()));
+            fs::remove_file(link).unwrap();
+        }
+        assert_eq!(fs::read(outside).unwrap(), b"untouched");
+    }
+    #[test]
+    fn payload_resolves_nested_relative_link_chain() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("nested")).unwrap();
+        fs::write(d.path().join("data"), b"example").unwrap();
+        link_file(Path::new("../data"), &d.path().join("nested/second"));
+        link_file(Path::new("nested/second"), &d.path().join("first"));
+        assert_eq!(
+            read_payload(d.path(), &d.path().join("first")).unwrap(),
+            b"example"
+        );
+    }
+    #[test]
+    fn linked_root_fingerprint_and_removal_do_not_touch_target() {
+        let d = tempfile::tempdir().unwrap();
+        let target = d.path().join("target");
+        let root = d.path().join("skills");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("example"), b"before").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &root).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&target, &root).unwrap();
+        let before = fingerprint(&root).unwrap();
+        fs::write(target.join("example"), b"after").unwrap();
+        assert_eq!(before, fingerprint(&root).unwrap());
+        remove(&root).unwrap();
+        assert_eq!(fs::read(target.join("example")).unwrap(), b"after");
+    }
     #[test]
     fn removal_rollback_keeps_external_recreation_and_restores_other_skills() {
         let d = tempfile::tempdir().unwrap();

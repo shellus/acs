@@ -36,6 +36,13 @@ impl AgentPackage {
         Ok(())
     }
     pub fn installed(&self, runner: &dyn Runner) -> Result<String> {
+        self.installed_with(runner, storage::read)
+    }
+    fn installed_with(
+        &self,
+        runner: &dyn Runner,
+        mut read: impl FnMut(&Path) -> Result<Option<Vec<u8>>>,
+    ) -> Result<String> {
         let root = String::from_utf8(run(runner, "npm", &["root", "-g"], None)?)?;
         let root = root.trim();
         if root.is_empty() {
@@ -43,7 +50,9 @@ impl AgentPackage {
         }
         self.validate_name()?;
         let path = Path::new(root).join(&self.name).join("package.json");
-        let Some(bytes) = storage::read(&path)? else {
+        let Some(bytes) =
+            read(&path).with_context(|| format!("读取已安装包 {}", path.display()))?
+        else {
             return Ok(String::new());
         };
         let metadata: serde_json::Value = serde_json::from_slice(&bytes)
@@ -73,6 +82,7 @@ impl AgentPackage {
         Ok(())
     }
 }
+
 impl Repository {
     pub fn package(&self, agent: Agent) -> Result<AgentPackage> {
         let p = self
@@ -137,4 +147,64 @@ pub fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
         }
     }
     Some(ap.len().cmp(&bp.len()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct NpmRoot(PathBuf);
+    impl Runner for NpmRoot {
+        fn run(
+            &self,
+            program: &str,
+            args: &[std::ffi::OsString],
+            _: Option<&Path>,
+        ) -> Result<Vec<u8>> {
+            assert_eq!(program, "npm");
+            assert_eq!(args, ["root", "-g"]);
+            Ok(self.0.to_string_lossy().as_bytes().to_vec())
+        }
+    }
+    #[test]
+    fn installed_only_reads_requested_package_and_reports_its_io_errors() {
+        let d = tempfile::tempdir().unwrap();
+        let runner = NpmRoot(d.path().join("node_modules"));
+        for (agent, name) in [
+            (Agent::Codex, "@openai/codex"),
+            (Agent::Claude, "@anthropic-ai/claude-code"),
+        ] {
+            let package = AgentPackage {
+                agent,
+                name: name.into(),
+                version: "1.0.0".into(),
+                pin: false,
+            };
+            let expected = runner.0.join(name).join("package.json");
+            let mut reads = vec![];
+            let version = package
+                .installed_with(&runner, |path| {
+                    reads.push(path.to_path_buf());
+                    if path != expected {
+                        return Err(std::io::Error::from_raw_os_error(448).into());
+                    }
+                    Ok(Some(br#"{"version":"1.0.0"}"#.to_vec()))
+                })
+                .unwrap();
+            assert_eq!(version, "1.0.0");
+            assert_eq!(reads, std::slice::from_ref(&expected));
+            let error = package
+                .installed_with(&runner, |_| {
+                    Err(std::io::Error::from_raw_os_error(448).into())
+                })
+                .unwrap_err();
+            assert!(format!("{error:#}").contains(&expected.display().to_string()));
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .raw_os_error(),
+                Some(448)
+            );
+        }
+    }
 }

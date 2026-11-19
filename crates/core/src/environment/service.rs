@@ -106,7 +106,7 @@ fn payload_hash(root: &Path) -> Result<String> {
             continue;
         }
         hash.update(e.path().strip_prefix(root)?.to_string_lossy().as_bytes());
-        hash.update(fs::read(e.path())?);
+        hash.update(tree::read_payload(root, e.path())?);
     }
     Ok(format!("{:x}", hash.finalize()))
 }

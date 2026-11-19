@@ -41,6 +41,10 @@ ACS_HOME 默认用户目录下 .acs；CODEX_HOME 默认 .codex；CLAUDE_CONFIG_D
 
 ## 快照、计划和应用
 
+安装版本检测仅执行 `npm root -g` 并读取对应 Agent 包的 `package.json`，不枚举全局 npm 包或访问无关 junction。读取失败必须包含目标路径并保留原始 IO 错误。
+
+Skill 内容哈希沿用链接目标内容及文本换行规范化约定。内部相对文件链接逐组件用不跟随链接的元数据解析，再读取根内目标，避免 Windows 高完整性 SSH 会话直接穿过普通用户创建的链接时触发错误 448。绝对链接、越出 Skill 根、循环、失效目标和不支持的重解析点阻止计划，错误包含原路径及可确定的目标路径，不忽略失败。目录事务基线不跟随根链接；复制和移除链接只操作链接实体，不改写其目标。
+
 environment.yaml/environment.lock 使用 version 2，所有模型拒绝未知字段；只接受 codex/claude，其他 Agent 报字段路径和 YAML 行列。发布快照固定为 `.vendor-snapshot.yaml`，由 vendor 生成；仓库需一次性切换，普通读取不兼容旧名。开发时将数据仓库检出到源码根下的 `agent-env/`，该目录被忽略且不是子模块；来源解析不依赖这一开发约定。
 
 Profile 与 Agent 的 include/exclude 分别拼接。include 支持 *、Skill 名、单 Skill 来源、来源:名称和来源:glob；exclude 精确匹配名称或来源:名称。重复选择去重，同名不同来源及无匹配 include 报错。disabled_skills 仅允许 Codex，名称须安全且不可重复。

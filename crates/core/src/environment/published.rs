@@ -89,7 +89,7 @@ pub fn tree_hash(root: &Path) -> Result<String> {
             .replace('\\', "/");
         hash.update(relative.as_bytes());
         hash.update([0]);
-        let bytes = std::fs::read(entry.path())?;
+        let bytes = tree::read_payload(root, entry.path())?;
         hash.update(portable_bytes(&bytes));
     }
     Ok(format!("{:x}", hash.finalize()))

@@ -133,6 +133,41 @@ fn files(paths: &Paths) -> BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime)> {
     values
 }
 #[test]
+fn linked_skill_payload_updates_and_repeated_apply_preserves_links() {
+    let (_d, p, repo, f) = setup();
+    let source = repo.join("skills/local/example-demo");
+    let link = source.join("CLAUDE.md");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("SKILL.md", &link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file("SKILL.md", &link).unwrap();
+    let s = Service {
+        paths: &p,
+        runner: &f,
+    };
+    s.apply(&s.prepare().unwrap()).unwrap();
+    put(
+        &source.join("SKILL.md"),
+        "---\nname: example-demo\n---\nexample updated\n",
+    );
+    let plan = s.prepare().unwrap();
+    assert!(plan.has_changes());
+    s.apply(&plan).unwrap();
+    for root in [&p.codex_skills, &p.roots.claude.join("skills")] {
+        let skill = root.join("example-demo");
+        assert_eq!(
+            fs::read_link(skill.join("CLAUDE.md")).unwrap(),
+            Path::new("SKILL.md")
+        );
+        assert_eq!(tree_hash(&skill).unwrap(), tree_hash(&source).unwrap());
+    }
+    let before = files(&p);
+    let plan = s.prepare().unwrap();
+    assert!(!plan.has_changes());
+    s.apply(&plan).unwrap();
+    assert_eq!(before, files(&p));
+}
+#[test]
 fn applies_takeover_updates_removals_retirement_and_preserves_unmanaged_content() {
     let (_d, p, repo, f) = setup();
     let s = Service {
